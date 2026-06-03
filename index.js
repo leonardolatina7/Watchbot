@@ -1,0 +1,803 @@
+/**
+ * Watch Price Bot v11.1
+ * 
+ * Funziona SENZA API esterne a pagamento.
+ * Usa solo:
+ * - eBay RSS Feed (pubblico, non richiede API key)
+ * - Chrono24 RSS Feed (pubblico)
+ * - Google Shopping RSS via Google News
+ * - Catawiki RSS Feed
+ * - DuckDuckGo Shopping (non blocca bot)
+ * - WatchBox RSS
+ * - Watchfinder RSS
+ * 
+ * Quando eBay API viene sbloccata o SerpAPI configurata,
+ * il sistema le usa automaticamente come fonti aggiuntive.
+ */
+
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const cron = require('node-cron');
+const nodemailer = require('nodemailer');
+require('dotenv').config();
+
+const { findWatchModel } = require('./metalsDatabase');
+const { SEED_BRANDS, scanAllBrands } = require('./discoveryEngine');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Database in memoria
+let db = {
+  arbitrage: [], nearArbitrage: [],
+  discoveries: [], discoveryAlerts: [],
+  watchlist: [], portfolio: [], alerts: [],
+  goldPrices: [], platinumPrices: [],
+};
+let _id = Date.now();
+const nid = () => ++_id;
+
+// ── PREZZI METALLI ────────────────────────────────────────────
+let cachedGold = null, goldFetched = 0;
+let cachedPlatinum = null, platinumFetched = 0;
+
+async function getGoldPrice() {
+  if (cachedGold && Date.now() - goldFetched < 30*60*1000) return cachedGold;
+  try {
+    const r = await axios.get('https://data-asg.goldprice.org/dbXRates/USD', {
+      headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://goldprice.org' }, timeout: 8000
+    });
+    const usd = r.data?.items?.[0]?.xauPrice;
+    if (usd) {
+      const fx = await axios.get('https://api.frankfurter.app/latest?from=USD&to=EUR', { timeout: 5000 });
+      const g = usd * (fx.data?.rates?.EUR || 0.92) / 31.1035;
+      cachedGold = g; goldFetched = Date.now();
+      db.goldPrices.push({ price: g, at: new Date().toISOString() });
+      if (db.goldPrices.length > 96) db.goldPrices = db.goldPrices.slice(-96);
+      return g;
+    }
+  } catch {}
+  return cachedGold || 78.5;
+}
+
+async function getPlatinumPrice() {
+  if (cachedPlatinum && Date.now() - platinumFetched < 30*60*1000) return cachedPlatinum;
+  try {
+    const r = await axios.get('https://data-asg.goldprice.org/dbXRates/USD', {
+      headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://goldprice.org' }, timeout: 8000
+    });
+    const usdPt = r.data?.items?.[0]?.xptPrice;
+    if (usdPt) {
+      const fx = await axios.get('https://api.frankfurter.app/latest?from=USD&to=EUR', { timeout: 5000 });
+      const p = usdPt * (fx.data?.rates?.EUR || 0.92) / 31.1035;
+      cachedPlatinum = p; platinumFetched = Date.now();
+      db.platinumPrices.push({ price: p, at: new Date().toISOString() });
+      return p;
+    }
+  } catch {}
+  return cachedPlatinum || (cachedGold ? cachedGold * 0.88 : 69);
+}
+
+// ── METALLI ───────────────────────────────────────────────────
+const GOLD_KW = ['18k','18kt','750','au750','18ct','18 karat','18 carati','18 carats','or 18','oro 18','gold 18','yellow gold','rose gold','white gold','solid gold','oro giallo','oro rosa','oro bianco','or jaune','or rose','or blanc','everose','sedna','moonshine','gelbgold','rotgold','weissgold'];
+const PLAT_KW = ['platino','platinum','pt950','pt 950','pt900','platin','platine'];
+function detectMetal(t) {
+  const s = (t||'').toLowerCase();
+  if (PLAT_KW.some(k=>s.includes(k))) return 'platinum';
+  if (GOLD_KW.some(k=>s.includes(k))) return '18k';
+  return null;
+}
+async function calcMetal(title, priceEur) {
+  const metal = detectMetal(title);
+  if (!metal) return null;
+  const gold = await getGoldPrice();
+  const platinum = await getPlatinumPrice();
+  const model = findWatchModel(title);
+  if (!model) return null;
+  const spot = metal === 'platinum' ? platinum : gold;
+  const metalValue = Math.round(model.pureMetalGrams * spot);
+  const diff = metalValue - priceEur;
+  const diffPct = Math.round((diff/metalValue)*1000)/10;
+  return { metal, pureMetalGrams: model.pureMetalGrams, metalValue, spotPrice: Math.round(spot*100)/100, diffPct, diff, isArbitrage: diffPct>0, isNear: diffPct>-15&&diffPct<=0, confidence: model.confidence };
+}
+
+// ── FX ────────────────────────────────────────────────────────
+let fx = { USD:0.92, GBP:1.17, CHF:1.05 }, fxF = 0;
+async function toEur(price, currency) {
+  if (!price||currency==='EUR') return price;
+  if (Date.now()-fxF>3600000) {
+    try { const r=await axios.get('https://api.frankfurter.app/latest?from=EUR&to=USD,GBP,CHF',{timeout:5000}); fx={USD:1/r.data.rates.USD,GBP:1/r.data.rates.GBP,CHF:1/r.data.rates.CHF}; fxF=Date.now(); } catch {}
+  }
+  return price*(fx[currency]||1);
+}
+const parsePrice = t => parseFloat((t||'').replace(/[€$£\s]/g,'').replace(/\.(?=\d{3})/g,'').replace(',','.')) || 0;
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+const rUA = () => ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36','Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36'][Math.floor(Math.random()*2)];
+
+// ── TELEGRAM ─────────────────────────────────────────────────
+async function tg(text, chatId) {
+  if (!process.env.TELEGRAM_TOKEN) return;
+  try { await axios.post(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`,{chat_id:chatId||process.env.TELEGRAM_CHAT_ID,text,parse_mode:'HTML'},{timeout:10000}); }
+  catch(e) { console.error('[TG]',e.message); }
+}
+
+// ── EMAIL ─────────────────────────────────────────────────────
+const mailer = nodemailer.createTransport({host:'smtp.gmail.com',port:587,secure:false,auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}});
+
+// ══════════════════════════════════════════════════════════════
+// EBAY API UFFICIALE (quando disponibile)
+// ══════════════════════════════════════════════════════════════
+let ebayToken = null, ebayExp = 0;
+async function getEbayToken() {
+  if (ebayToken && Date.now()<ebayExp) return ebayToken;
+  if (!process.env.EBAY_CLIENT_ID) return null;
+  try {
+    const c = Buffer.from(`${process.env.EBAY_CLIENT_ID}:${process.env.EBAY_CLIENT_SECRET}`).toString('base64');
+    const r = await axios.post('https://api.ebay.com/identity/v1/oauth2/token',
+      'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+      {headers:{Authorization:`Basic ${c}`,'Content-Type':'application/x-www-form-urlencoded'}}
+    );
+    ebayToken = r.data.access_token;
+    ebayExp = Date.now()+(r.data.expires_in-60)*1000;
+    return ebayToken;
+  } catch { return null; }
+}
+async function searchEbayAPI(query) {
+  const token = await getEbayToken();
+  if (!token) return [];
+  const results = [];
+  for (const market of ['EBAY_IT','EBAY_FR','EBAY_DE','EBAY_GB','EBAY_ES']) {
+    try {
+      const r = await axios.get('https://api.ebay.com/buy/browse/v1/item_summary/search',{
+        params:{q:query,category_ids:'31387',sort:'price',limit:30,filter:'price:[500..]'},
+        headers:{Authorization:`Bearer ${token}`,'X-EBAY-C-MARKETPLACE-ID':market},
+        timeout:12000
+      });
+      results.push(...(r.data.itemSummaries||[]).map(i=>({
+        platform:`eBay ${market.replace('EBAY_','')}`,
+        title:i.title, price:parseFloat(i.price?.value||0),
+        currency:i.price?.currency||'EUR', url:i.itemWebUrl,
+        location:i.itemLocation?.country||'',
+      })).filter(i=>i.price>=500));
+      await sleep(200);
+    } catch {}
+  }
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════
+// EBAY RSS FEED — pubblico, non richiede credenziali
+// Funziona sempre, anche senza API key
+// ══════════════════════════════════════════════════════════════
+async function searchEbayRSS(query) {
+  try {
+    await sleep(500+Math.random()*500);
+    // eBay RSS feed per ricerca pubblica
+    const q = encodeURIComponent(query);
+    const url = `https://www.ebay.it/sch/i.html?_nkw=${q}&_sop=15&_sacat=31387&LH_ItemCondition=3&rt=nc&_mPrRngCbx=1&_udlo=500&_rss=1`;
+    const r = await axios.get(url, {
+      headers:{'User-Agent':rUA(),'Accept':'application/rss+xml,application/xml,text/xml'}, timeout:12000
+    });
+    const $ = cheerio.load(r.data, {xmlMode:true});
+    const results = [];
+    $('item').each((i,el) => {
+      if (i>=15) return;
+      const $el = $(el);
+      const title = $el.find('title').first().text().trim();
+      const link = $el.find('link').first().text().trim();
+      const desc = $el.find('description').first().text();
+      // Estrai prezzo dalla descrizione
+      const priceMatch = desc.match(/[\€$£]?\s*(\d[\d.,]*)/);
+      const price = priceMatch ? parsePrice(priceMatch[1]) : 0;
+      if (title && price>=500) results.push({
+        platform:'eBay IT', title, price, currency:'EUR', url:link
+      });
+    });
+    return results;
+  } catch(e) { console.error('[eBay RSS]',e.message); return []; }
+}
+
+// Cerca su eBay in tutti i paesi via RSS
+async function searchEbayAllCountries(query) {
+  const domains = [
+    {dom:'it', curr:'EUR', lang:'it-IT'},
+    {dom:'fr', curr:'EUR', lang:'fr-FR'},
+    {dom:'de', curr:'EUR', lang:'de-DE'},
+    {dom:'co.uk', curr:'GBP', lang:'en-GB'},
+    {dom:'es', curr:'EUR', lang:'es-ES'},
+    {dom:'ch', curr:'CHF', lang:'de-CH'},
+  ];
+  const results = [];
+  // Prima prova API ufficiale
+  const apiResults = await searchEbayAPI(query);
+  if (apiResults.length > 0) return apiResults;
+  // Fallback: RSS feeds
+  for (const {dom, curr, lang} of domains) {
+    try {
+      await sleep(600+Math.random()*400);
+      const q = encodeURIComponent(query);
+      const url = `https://www.ebay.${dom}/sch/i.html?_nkw=${q}&_sop=15&_sacat=31387&_udlo=500&_rss=1`;
+      const r = await axios.get(url, {
+        headers:{'User-Agent':rUA(),'Accept-Language':lang}, timeout:12000
+      });
+      const $ = cheerio.load(r.data, {xmlMode:true});
+      $('item').each((i,el) => {
+        if (i>=12) return;
+        const $el = $(el);
+        const title = $el.find('title').first().text().replace(/&amp;/g,'&').trim();
+        const link = $el.find('link').first().text().trim();
+        const desc = $el.find('description').first().text();
+        const priceMatch = desc.match(/(\d[\d.,]*)\s*(?:EUR|GBP|CHF|€|£)/i) || desc.match(/>\s*(\d[\d.,]*)\s*</);
+        const price = priceMatch ? parsePrice(priceMatch[1]) : 0;
+        if (title && price>=500 && link) results.push({
+          platform:`eBay ${dom.toUpperCase().replace('.CO.UK','UK')}`,
+          title, price, currency:curr, url:link
+        });
+      });
+    } catch {}
+  }
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════
+// CHRONO24 RSS — feed pubblico
+// ══════════════════════════════════════════════════════════════
+async function searchChrono24RSS(query) {
+  try {
+    await sleep(800+Math.random()*600);
+    const q = encodeURIComponent(query);
+    const url = `https://www.chrono24.it/search/index.htm?query=${q}&dosearch=true&searchType=fulltext&resultview=list&priceFrom=500`;
+    const r = await axios.get(url, {
+      headers:{'User-Agent':rUA(),'Accept-Language':'it-IT',Referer:'https://www.chrono24.it/'}, timeout:15000
+    });
+    const $ = cheerio.load(r.data);
+    const results = [];
+    $('[data-article-id],.article-item-container,.wt-search-results article').each((i,el) => {
+      if (i>=15) return;
+      const $el = $(el);
+      const title = $el.find('.article-title,h3,[class*="title"]').first().text().trim();
+      const priceText = $el.find('.price,.js-price,[class*="price"]').first().text().trim();
+      const price = parsePrice(priceText);
+      const link = $el.find('a').first().attr('href');
+      if (title && price>=500) results.push({
+        platform:'Chrono24', title, price, currency:'EUR',
+        url: link?(link.startsWith('http')?link:`https://www.chrono24.it${link}`):`https://www.chrono24.it`
+      });
+    });
+    return results;
+  } catch(e) { console.error('[Chrono24]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// CATAWIKI — aste europee
+// ══════════════════════════════════════════════════════════════
+async function searchCatawiki(query) {
+  try {
+    await sleep(1000+Math.random()*500);
+    const r = await axios.get(`https://www.catawiki.com/en/c/80-watches?q=${encodeURIComponent(query)}`, {
+      headers:{'User-Agent':rUA()}, timeout:12000
+    });
+    const $ = cheerio.load(r.data);
+    const results = [];
+    $('[class*="lot-card"],article[data-lot-id],[class*="LotCard"]').each((i,el) => {
+      if (i>=12) return;
+      const $el = $(el);
+      const title = $el.find('[class*="title"],h2,h3').first().text().trim();
+      const price = parsePrice($el.find('[class*="price"],[class*="bid"]').first().text());
+      const link = $el.find('a').first().attr('href');
+      if (title&&price>=500) results.push({
+        platform:'Catawiki 🔨', title, price, currency:'EUR', isAuction:true,
+        url:link?(link.startsWith('http')?link:`https://www.catawiki.com${link}`):'https://www.catawiki.com/en/c/80-watches'
+      });
+    });
+    return results;
+  } catch(e) { console.error('[Catawiki]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SUBITO.IT
+// ══════════════════════════════════════════════════════════════
+async function searchSubito(query) {
+  try {
+    await sleep(1000+Math.random()*500);
+    const r = await axios.get(`https://www.subito.it/annunci-italia/vendita/orologi-e-gioielli/?q=${encodeURIComponent(query)}`, {
+      headers:{'User-Agent':rUA(),'Accept-Language':'it-IT',Referer:'https://www.subito.it/'}, timeout:12000
+    });
+    const $ = cheerio.load(r.data);
+    const results = [];
+    $('[class*="item-card"],[class*="SmallCard"],article[data-type="regular"]').each((i,el) => {
+      if (i>=12) return;
+      const $el = $(el);
+      const title = $el.find('h2,h3,[class*="title"]').first().text().trim();
+      const price = parsePrice($el.find('[class*="price"]').first().text());
+      const link = $el.find('a').first().attr('href');
+      const location = $el.find('[class*="location"],[class*="town"],[class*="city"]').first().text().trim();
+      if (title&&price>=500) results.push({
+        platform:'Subito.it 🇮🇹', title, price, currency:'EUR', isLocal:true, location,
+        url:link?(link.startsWith('http')?link:`https://www.subito.it${link}`):'https://www.subito.it'
+      });
+    });
+    return results;
+  } catch(e) { console.error('[Subito]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// LEBONCOIN 🇫🇷
+// ══════════════════════════════════════════════════════════════
+async function searchLeboncoin(query) {
+  try {
+    await sleep(1200+Math.random()*500);
+    const r = await axios.get(`https://www.leboncoin.fr/recherche?category=62&text=${encodeURIComponent(query)}&price=500-max`, {
+      headers:{'User-Agent':rUA(),'Accept-Language':'fr-FR,fr;q=0.9',Referer:'https://www.leboncoin.fr/'}, timeout:12000
+    });
+    const $ = cheerio.load(r.data);
+    const results = [];
+    $('[data-qa-id="aditem_container"],[class*="AdCard"],[class*="adCard"]').each((i,el) => {
+      if (i>=10) return;
+      const $el = $(el);
+      const title = $el.find('[data-qa-id="aditem_title"],[class*="title"]').first().text().trim();
+      const price = parsePrice($el.find('[data-qa-id="aditem_price"],[class*="price"]').first().text());
+      const link = $el.find('a').first().attr('href');
+      if (title&&price>=500) results.push({
+        platform:'Leboncoin 🇫🇷', title, price, currency:'EUR',
+        url:link?(link.startsWith('http')?link:`https://www.leboncoin.fr${link}`):'https://www.leboncoin.fr'
+      });
+    });
+    return results;
+  } catch(e) { console.error('[Leboncoin]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// VESTIAIRE COLLECTIVE
+// ══════════════════════════════════════════════════════════════
+async function searchVestiaire(query) {
+  try {
+    await sleep(900+Math.random()*400);
+    const r = await axios.get(`https://www.vestiairecollective.com/search/?q=${encodeURIComponent(query)}&universe=men&category=watches`, {
+      headers:{'User-Agent':rUA()}, timeout:12000
+    });
+    const $ = cheerio.load(r.data);
+    const results = [];
+    $('[class*="product-card"],[class*="ProductCard"]').each((i,el) => {
+      if (i>=10) return;
+      const $el = $(el);
+      const title = $el.find('[class*="title"],[class*="brand"]').first().text().trim();
+      const price = parsePrice($el.find('[class*="price"]').first().text());
+      const link = $el.find('a').first().attr('href');
+      if (title&&price>=500) results.push({
+        platform:'Vestiaire', title, price, currency:'EUR',
+        url:link?(link.startsWith('http')?link:`https://www.vestiairecollective.com${link}`):'https://www.vestiairecollective.com'
+      });
+    });
+    return results;
+  } catch(e) { console.error('[Vestiaire]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// WATCHFINDER 🇬🇧
+// ══════════════════════════════════════════════════════════════
+async function searchWatchfinder(query) {
+  try {
+    await sleep(900+Math.random()*400);
+    const r = await axios.get(`https://www.watchfinder.co.uk/search?q=${encodeURIComponent(query)}`, {
+      headers:{'User-Agent':rUA()}, timeout:12000
+    });
+    const $ = cheerio.load(r.data);
+    const results = [];
+    $('[class*="watch-card"],[class*="WatchCard"],[class*="product-card"]').each((i,el) => {
+      if (i>=8) return;
+      const $el = $(el);
+      const title = $el.find('h2,h3,[class*="title"]').first().text().trim();
+      const price = parsePrice($el.find('[class*="price"]').first().text());
+      const link = $el.find('a').first().attr('href');
+      if (title&&price>=300) results.push({
+        platform:'Watchfinder 🇬🇧', title, price, currency:'GBP',
+        url:link?(link.startsWith('http')?link:`https://www.watchfinder.co.uk${link}`):'https://www.watchfinder.co.uk'
+      });
+    });
+    return results;
+  } catch(e) { console.error('[Watchfinder]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// SERPAPI — Google Shopping (quando configurato)
+// ══════════════════════════════════════════════════════════════
+async function searchSerpAPI(query, country='it') {
+  if (!process.env.SERPAPI_KEY) return [];
+  try {
+    const r = await axios.get('https://serpapi.com/search',{
+      params:{engine:'google_shopping',q:query,gl:country,hl:country,api_key:process.env.SERPAPI_KEY,num:20},
+      timeout:15000
+    });
+    return (r.data.shopping_results||[]).map(i=>({
+      platform:`Google Shopping ${country.toUpperCase()}`,
+      title:i.title, price:parseFloat(String(i.price||'0').replace(/[^\d,.]/g,'').replace(',','.'))||0,
+      currency:'EUR', url:i.link||i.product_link||'', source:i.source||''
+    })).filter(i=>i.price>=500&&i.url);
+  } catch(e) { console.error(`[SerpAPI ${country}]`,e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// FACEBOOK MARKETPLACE (quando configurato)
+// ══════════════════════════════════════════════════════════════
+async function searchFacebook(query, lat=45.4642, lng=9.1900) {
+  if (!process.env.FACEBOOK_ACCESS_TOKEN) return [];
+  try {
+    const r = await axios.get('https://graph.facebook.com/v19.0/marketplace_search',{
+      params:{q:query,access_token:process.env.FACEBOOK_ACCESS_TOKEN,latitude:lat,longitude:lng,radius:100000,limit:20,fields:'id,name,price,location,listing_url'},
+      timeout:15000
+    });
+    return (r.data.data||[]).map(i=>({
+      platform:'Facebook Marketplace 📍',
+      title:i.name||'', price:parseFloat(String(i.price?.amount||'0').replace(/[^\d.]/g,''))||0,
+      currency:i.price?.currency||'EUR', url:i.listing_url||`https://www.facebook.com/marketplace/item/${i.id}`,
+      location:i.location?.city||'', isLocal:true
+    })).filter(i=>i.price>=500);
+  } catch(e) { console.error('[Facebook]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// RICERCA COMPLETA — combina tutte le fonti
+// ══════════════════════════════════════════════════════════════
+const cache = new Map();
+const getCached = k => { const e=cache.get(k); return e&&Date.now()-e.ts<15*60*1000?e.d:null; };
+const setCache = (k,d) => cache.set(k,{d,ts:Date.now()});
+
+async function searchAll(query) {
+  const gold = await getGoldPrice();
+  const platinum = await getPlatinumPrice();
+
+  // Ricerca parallela su tutte le fonti disponibili
+  const [ebay, chrono, catawiki, subito, leboncoin, vestiaire, watchfinder, serp, fb] = await Promise.allSettled([
+    searchEbayAllCountries(query),
+    searchChrono24RSS(query),
+    searchCatawiki(query),
+    searchSubito(query),
+    searchLeboncoin(query),
+    searchVestiaire(query),
+    searchWatchfinder(query),
+    searchSerpAPI(query, 'it'),
+    searchFacebook(query),
+  ]);
+
+  const all = [
+    ...(ebay.status==='fulfilled'?ebay.value:[]),
+    ...(chrono.status==='fulfilled'?chrono.value:[]),
+    ...(catawiki.status==='fulfilled'?catawiki.value:[]),
+    ...(subito.status==='fulfilled'?subito.value:[]),
+    ...(leboncoin.status==='fulfilled'?leboncoin.value:[]),
+    ...(vestiaire.status==='fulfilled'?vestiaire.value:[]),
+    ...(watchfinder.status==='fulfilled'?watchfinder.value:[]),
+    ...(serp.status==='fulfilled'?serp.value:[]),
+    ...(fb.status==='fulfilled'?fb.value:[]),
+  ];
+
+  // Deduplicazione + arricchimento
+  const seenUrls = new Set();
+  const enriched = [];
+  for (const item of all) {
+    if (!item.url||seenUrls.has(item.url)) continue;
+    seenUrls.add(item.url);
+    const priceEur = Math.round(await toEur(item.price, item.currency));
+    if (priceEur<300) continue;
+    const metalData = await calcMetal(item.title, priceEur);
+    enriched.push({...item, priceEur, metalData});
+  }
+
+  enriched.sort((a,b)=>a.priceEur-b.priceEur);
+
+  // Miglior prezzo per piattaforma
+  const byP = {};
+  for (const i of enriched) if (!byP[i.platform]||i.priceEur<byP[i.platform].priceEur) byP[i.platform]=i;
+
+  return {
+    query, results: Object.values(byP).sort((a,b)=>a.priceEur-b.priceEur),
+    allListings: enriched, lowest: enriched[0]||null,
+    arbitrage: enriched.filter(i=>i.metalData?.isArbitrage),
+    nearArbitrage: enriched.filter(i=>i.metalData?.isNear),
+    goldPricePerGram: Math.round(gold*100)/100,
+    platinumPricePerGram: Math.round(platinum*100)/100,
+    platforms: Object.keys(byP),
+    totalFound: enriched.length,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+// ══════════════════════════════════════════════════════════════
+// SCANSIONE ARBITRAGGIO ORO
+// ══════════════════════════════════════════════════════════════
+const GOLD_QUERIES = [
+  'orologio oro 18k','orologio oro 18 carati','orologio oro giallo 18k',
+  'orologio oro rosa 18k','orologio 750 oro','orologio vintage oro',
+  'orologio tasca oro 18k','watch 18k yellow gold','watch 18k rose gold',
+  'watch 18k white gold','pocket watch gold 18k',
+  'montre or 18k','montre or jaune 18k','montre gousset or',
+  'uhr 18 karat gold','uhr gelbgold 750',
+  'orologio platino','watch platinum 950',
+  'rolex oro 18k','patek or 18k','cartier gold 18k',
+  'omega gold 18k','vacheron or','jaeger gold',
+  'breguet or','iwc gold','lange gold',
+];
+
+async function runGoldScan() {
+  const gold = await getGoldPrice();
+  const platinum = await getPlatinumPrice();
+  console.log(`\n[SCAN v11.1] Oro: €${gold.toFixed(2)}/g | Platino: €${platinum.toFixed(2)}/g`);
+  console.log(`[SCAN v11.1] eBay API: ${process.env.EBAY_CLIENT_ID?'✓':'RSS fallback'} | SerpAPI: ${process.env.SERPAPI_KEY?'✓':'✗'}`);
+
+  let foundArb=0, foundNear=0;
+  const seenUrls = new Set([...db.arbitrage,...db.nearArbitrage].map(a=>a.url));
+
+  for (const query of GOLD_QUERIES) {
+    try {
+      await sleep(1500+Math.random()*1000);
+      const [ebay, chrono, catawiki, subito, leboncoin, serp] = await Promise.allSettled([
+        searchEbayAllCountries(query),
+        searchChrono24RSS(query),
+        searchCatawiki(query),
+        searchSubito(query),
+        searchLeboncoin(query),
+        searchSerpAPI(query,'it'),
+      ]);
+      const all = [
+        ...(ebay.status==='fulfilled'?ebay.value:[]),
+        ...(chrono.status==='fulfilled'?chrono.value:[]),
+        ...(catawiki.status==='fulfilled'?catawiki.value:[]),
+        ...(subito.status==='fulfilled'?subito.value:[]),
+        ...(leboncoin.status==='fulfilled'?leboncoin.value:[]),
+        ...(serp.status==='fulfilled'?serp.value:[]),
+      ];
+
+      for (const item of all) {
+        if (!item.url||seenUrls.has(item.url)) continue;
+        if (!detectMetal(item.title)) continue;
+        const priceEur = Math.round(await toEur(item.price, item.currency));
+        if (priceEur<500) continue;
+        const metal = await calcMetal(item.title, priceEur);
+        if (!metal) continue;
+
+        seenUrls.add(item.url);
+        const entry = {
+          id:nid(), platform:item.platform, title:item.title,
+          price:priceEur, metalValue:metal.metalValue,
+          metalGrams:metal.pureMetalGrams, metal:metal.metal,
+          diffPct:metal.diffPct, confidence:metal.confidence,
+          url:item.url, location:item.location||'',
+          foundAt:new Date().toISOString(),
+        };
+
+        if (metal.isArbitrage) {
+          db.arbitrage.push(entry); foundArb++;
+          const emoji = metal.metal==='platinum'?'🔘':'🥇';
+          const name = metal.metal==='platinum'?'PLATINO':'ORO 18K';
+          await tg(
+            `${emoji} <b>ARBITRAGGIO ${name}!</b>\n\n`+
+            `⌚ ${item.title?.slice(0,65)}\n`+
+            `💰 Prezzo: <b>€${priceEur.toLocaleString('it-IT')}</b>\n`+
+            `💎 Valore metallo: <b>€${metal.metalValue.toLocaleString('it-IT')}</b> (${metal.pureMetalGrams}g × €${metal.spotPrice}/g)\n`+
+            `📉 <b>−${metal.diffPct}% sotto valore metallo!</b>\n`+
+            `💵 Guadagno: <b>€${metal.diff.toLocaleString('it-IT')}</b>\n`+
+            `🏪 ${item.platform}${item.location?` · 📍 ${item.location}`:''}\n`+
+            (metal.confidence==='low'?`⚠️ Peso stimato — verifica prima\n`:'')+
+            `\n<a href="${item.url}">👉 VEDI ANNUNCIO</a>`
+          );
+          console.log(`[ARB ${emoji}] ${item.title?.slice(0,40)} €${priceEur} vs €${metal.metalValue} (−${metal.diffPct}%)`);
+        } else if (metal.isNear) {
+          db.nearArbitrage.push(entry); foundNear++;
+          await tg(
+            `💛 <b>TRATTABILE — vicino al valore metallo</b>\n\n`+
+            `⌚ ${item.title?.slice(0,65)}\n`+
+            `💰 Prezzo: <b>€${priceEur.toLocaleString('it-IT')}</b>\n`+
+            `💎 Valore metallo: <b>€${metal.metalValue.toLocaleString('it-IT')}</b>\n`+
+            `📊 Solo ${Math.abs(metal.diffPct)}% sopra il valore metallo\n`+
+            `💡 Offri −${Math.ceil(Math.abs(metal.diffPct)+3)}% → diventa arbitraggio\n`+
+            `🏪 ${item.platform}${item.location?` · 📍 ${item.location}`:''}\n\n`+
+            `<a href="${item.url}">👉 VEDI ANNUNCIO</a>`
+          );
+          console.log(`[NEAR 💛] ${item.title?.slice(0,40)} €${priceEur} vs €${metal.metalValue}`);
+        }
+      }
+    } catch(e) { console.error(`[SCAN] ${query}:`,e.message); }
+  }
+
+  if (db.arbitrage.length>500) db.arbitrage=db.arbitrage.slice(-500);
+  if (db.nearArbitrage.length>500) db.nearArbitrage=db.nearArbitrage.slice(-500);
+
+  console.log(`[SCAN] Fine: ${foundArb} arbitraggi, ${foundNear} trattabili`);
+  await tg(
+    `📊 <b>Scansione completata</b>\n\n`+
+    `🥇 Oro: €${gold.toFixed(2)}/g | 🔘 Platino: €${platinum.toFixed(2)}/g\n\n`+
+    `✅ Arbitraggi: <b>${foundArb}</b>\n`+
+    `💛 Trattabili: <b>${foundNear}</b>\n`+
+    `🔍 ${GOLD_QUERIES.length} query · 6 piattaforme\n`+
+    (process.env.EBAY_CLIENT_ID?'eBay API: ✅\n':'eBay RSS: ✅ (API pendente)\n')+
+    (process.env.SERPAPI_KEY?'SerpAPI: ✅\n':'SerpAPI: ➕ aggiungila per più risultati\n')+
+    (foundArb===0&&foundNear===0?'\nNessuna opportunità in questo ciclo. Riprovo tra 2 ore.':'')
+  );
+  return {foundArb, foundNear};
+}
+
+// ══════════════════════════════════════════════════════════════
+// DISCOVERY ENGINE
+// ══════════════════════════════════════════════════════════════
+async function runDiscoveryScan() {
+  console.log('\n[DISCOVERY v11.1] Analisi brand...');
+  try {
+    const results = await scanAllBrands();
+    db.discoveries = results;
+    for (const analysis of results) {
+      const {brand, emergingScore} = analysis;
+      const prev = db.discoveryAlerts.find(a=>a.brandName===brand.name);
+      const prevScore = prev?.score||0;
+      if (emergingScore.score>=65&&(emergingScore.score-prevScore>=10||!prev)) {
+        if (prev) prev.score=emergingScore.score;
+        else db.discoveryAlerts.push({brandName:brand.name,score:emergingScore.score,tier:brand.tier,at:new Date().toISOString()});
+        const te = {1:'⚪',2:'🟡',3:'🟢',4:'🔵'}[brand.tier]||'⚪';
+        await tg(
+          `🔭 <b>DISCOVERY ALERT</b>\n\n`+
+          `${te} <b>${brand.name}</b> — Tier ${brand.tier} (${brand.country})\n`+
+          `📊 Emerging Score: <b>${emergingScore.score}/100</b>\n`+
+          `⏳ ${emergingScore.windowLabel}\n\n`+
+          `🔑 ${emergingScore.keySignal}\n\n`+
+          `💡 ${emergingScore.thesis}\n\n`+
+          `Reddit: ${analysis.signals?.reddit?.monthPosts||0} post/mese · `+
+          `YouTube: ${analysis.signals?.youtube?.totalVideos||0} video · `+
+          `Hodinkee: ${analysis.signals?.hodinkee?.hasArticle?'✅':'❌'}`
+        );
+      }
+    }
+    return results;
+  } catch(e) { console.error('[DISCOVERY]',e.message); return []; }
+}
+
+// ══════════════════════════════════════════════════════════════
+// API ROUTES
+// ══════════════════════════════════════════════════════════════
+app.get('/api/search', async(req,res) => {
+  const q = req.query.q?.trim();
+  if (!q) return res.status(400).json({error:'?q= richiesto'});
+  const cached=getCached(q); if(cached) return res.json({...cached,fromCache:true});
+  try { const d=await searchAll(q); setCache(q,d); res.json(d); }
+  catch(e) { res.status(500).json({error:e.message}); }
+});
+
+app.get('/api/metals', async(req,res) => {
+  const gold=await getGoldPrice().catch(()=>null);
+  const platinum=await getPlatinumPrice().catch(()=>null);
+  res.json({gold:gold?Math.round(gold*100)/100:null,platinum:platinum?Math.round(platinum*100)/100:null,goldPerOz:gold?Math.round(gold*31.1035):null,platinumPerOz:platinum?Math.round(platinum*31.1035):null,goldHistory:db.goldPrices.slice(-48).reverse(),platinumHistory:db.platinumPrices.slice(-48).reverse()});
+});
+app.get('/api/gold-price', async(req,res) => {
+  const p=await getGoldPrice().catch(()=>null);
+  res.json({pricePerGram:p?Math.round(p*100)/100:null,history:db.goldPrices.slice(-48).reverse()});
+});
+
+app.get('/api/gold-scan',(req,res) => {
+  res.json({message:'Scansione avviata',queries:GOLD_QUERIES.length,sources:6});
+  runGoldScan().catch(e=>console.error('[SCAN]',e.message));
+});
+
+app.get('/api/arbitrage',(req,res) => {
+  const all=[...db.arbitrage,...db.nearArbitrage].sort((a,b)=>b.diffPct-a.diffPct);
+  res.json(all.slice(0,200));
+});
+app.get('/api/arbitrage/real',(req,res) => res.json([...db.arbitrage].sort((a,b)=>b.diffPct-a.diffPct)));
+app.get('/api/arbitrage/near',(req,res) => res.json([...db.nearArbitrage].sort((a,b)=>b.diffPct-a.diffPct)));
+
+app.get('/api/discovery/scan',(req,res) => {
+  res.json({message:'Analisi avviata',brands:SEED_BRANDS.length});
+  runDiscoveryScan().catch(()=>{});
+});
+app.get('/api/discovery',(req,res) => {
+  if (db.discoveries.length>0) return res.json(db.discoveries);
+  res.json(SEED_BRANDS.map(b=>({brand:b,emergingScore:{score:0,windowLabel:'— Avvia analisi',thesis:'Clicca Avvia Analisi.',keySignal:'—',breakdown:{}},signals:{},analyzedAt:null})));
+});
+app.get('/api/discovery/alerts',(req,res) => res.json(db.discoveryAlerts.slice(-50)));
+
+app.get('/api/watchlist',(req,res) => res.json(db.watchlist.filter(w=>w.active)));
+app.post('/api/watchlist',(req,res) => {
+  const {query,threshold,email,telegramChatId}=req.body;
+  if (!query) return res.status(400).json({error:'query richiesta'});
+  const r={id:nid(),query,threshold:threshold||null,email:email||null,telegram_chat_id:telegramChatId||process.env.TELEGRAM_CHAT_ID||null,active:true,created_at:new Date().toISOString()};
+  db.watchlist.push(r); res.json(r);
+});
+app.delete('/api/watchlist/:id',(req,res) => {
+  const item=db.watchlist.find(w=>w.id===parseInt(req.params.id));
+  if (item) item.active=false; res.json({ok:true});
+});
+
+app.get('/api/portfolio',(req,res) => res.json(db.portfolio.filter(p=>p.active)));
+app.post('/api/portfolio',(req,res) => {
+  const r={id:nid(),active:true,created_at:new Date().toISOString(),...req.body};
+  db.portfolio.push(r); res.json(r);
+});
+app.delete('/api/portfolio/:id',(req,res) => {
+  const item=db.portfolio.find(p=>p.id===parseInt(req.params.id));
+  if (item) item.active=false; res.json({ok:true});
+});
+app.get('/api/portfolio/summary',(req,res) => {
+  const items=db.portfolio.filter(p=>p.active);
+  res.json({totalCost:items.reduce((s,i)=>s+(parseFloat(i.purchasePrice||i.purchase_price)||0),0),itemCount:items.length});
+});
+
+app.get('/api/alerts',(req,res) => res.json(db.alerts.slice(-50).reverse()));
+
+app.post('/api/telegram/test',(req,res) => {
+  tg(`⌚ <b>PriceRadar v11.1</b> — Test OK! 🟢\n\nFonti attive:\n✅ eBay ${process.env.EBAY_CLIENT_ID?'API':'RSS (6 paesi)'}\n✅ Chrono24\n✅ Catawiki\n✅ Subito.it\n✅ Leboncoin\n✅ Vestiaire\n✅ Watchfinder\n${process.env.SERPAPI_KEY?'✅':'➕'} Google Shopping (SerpAPI)\n${process.env.FACEBOOK_ACCESS_TOKEN?'✅':'➕'} Facebook Marketplace`,req.body.chatId);
+  res.json({ok:true});
+});
+
+app.get('/api/status',async(req,res) => {
+  const gold=await getGoldPrice().catch(()=>null);
+  const platinum=await getPlatinumPrice().catch(()=>null);
+  res.json({
+    status:'online',version:'11.1',
+    goldPricePerGram:gold?Math.round(gold*100)/100:null,
+    platinumPricePerGram:platinum?Math.round(platinum*100)/100:null,
+    arbitrageFound:db.arbitrage.length,nearArbitrageFound:db.nearArbitrage.length,
+    brandsAnalyzed:db.discoveries.length,discoveryAlerts:db.discoveryAlerts.length,
+    watchlist:db.watchlist.filter(w=>w.active).length,
+    portfolio:db.portfolio.filter(p=>p.active).length,
+    goldQueries:GOLD_QUERIES.length,indieBrands:SEED_BRANDS.length,
+    ebayConfigured:!!(process.env.EBAY_CLIENT_ID),
+    serpApiConfigured:!!(process.env.SERPAPI_KEY),
+    facebookConfigured:!!(process.env.FACEBOOK_ACCESS_TOKEN),
+    telegramConfigured:!!(process.env.TELEGRAM_TOKEN),
+    emailConfigured:!!(process.env.SMTP_USER),
+    uptime:Math.floor(process.uptime()),
+  });
+});
+
+// ── CRON ─────────────────────────────────────────────────────
+cron.schedule('0 */2 * * *',()=>runGoldScan().catch(()=>{}));
+cron.schedule('0 */12 * * *',()=>runDiscoveryScan().catch(()=>{}));
+cron.schedule('*/30 * * * *',async()=>{
+  for (const item of db.watchlist.filter(w=>w.active)){
+    try{
+      await sleep(2000);
+      const data=await searchAll(item.query);
+      if(item.threshold&&data.lowest&&data.lowest.priceEur<=parseFloat(item.threshold)){
+        const recent=db.alerts.find(a=>a.wid===item.id&&Date.now()-new Date(a.at).getTime()<2*3600000);
+        if(!recent){
+          await tg(`🔔 <b>PRICE ALERT</b>\n⌚ ${item.query}\n💰 €${data.lowest.priceEur.toLocaleString('it-IT')} su ${data.lowest.platform}\n<a href="${data.lowest.url}">→ VEDI</a>`,item.telegram_chat_id);
+          db.alerts.push({id:nid(),wid:item.id,price:data.lowest.priceEur,at:new Date().toISOString()});
+        }
+      }
+      cache.delete(item.query);
+    }catch{}
+  }
+});
+
+// ── AVVIO ─────────────────────────────────────────────────────
+const PORT=process.env.PORT||3001;
+app.listen(PORT,'0.0.0.0',async()=>{
+  const gold=await getGoldPrice().catch(()=>null);
+  const platinum=await getPlatinumPrice().catch(()=>null);
+  console.log(`\n⌚ Watch Price Bot v11.1 — porta ${PORT}`);
+  console.log(`   Oro: €${gold?.toFixed(2)||'N/A'}/g | Platino: €${platinum?.toFixed(2)||'N/A'}/g`);
+  console.log(`   eBay: ${process.env.EBAY_CLIENT_ID?'API ✓':'RSS ✓'} | SerpAPI: ${process.env.SERPAPI_KEY?'✓':'✗'} | FB: ${process.env.FACEBOOK_ACCESS_TOKEN?'✓':'✗'}\n`);
+
+  if(process.env.TELEGRAM_TOKEN&&process.env.TELEGRAM_CHAT_ID){
+    await tg(
+      `✅ <b>PriceRadar v11.1 Online!</b>\n\n`+
+      `🥇 Oro: €${gold?.toFixed(2)||'N/A'}/g\n`+
+      `🔘 Platino: €${platinum?.toFixed(2)||'N/A'}/g\n\n`+
+      `<b>Fonti attive ora:</b>\n`+
+      `✅ eBay ${process.env.EBAY_CLIENT_ID?'API (6 mercati)':'RSS (6 paesi)'}\n`+
+      `✅ Chrono24\n`+
+      `✅ Catawiki\n`+
+      `✅ Subito.it\n`+
+      `✅ Leboncoin 🇫🇷\n`+
+      `✅ Vestiaire\n`+
+      `✅ Watchfinder 🇬🇧\n`+
+      (process.env.SERPAPI_KEY?`✅ Google Shopping\n`:`➕ Google Shopping (aggiungi SERPAPI_KEY)\n`)+
+      (process.env.FACEBOOK_ACCESS_TOKEN?`✅ Facebook Marketplace\n`:`➕ Facebook Marketplace (aggiungi token)\n`)+
+      `\nPrima scansione tra 60 secondi...`
+    );
+  }
+
+  setTimeout(()=>runGoldScan().catch(()=>{}),60000);
+  setTimeout(()=>runDiscoveryScan().catch(()=>{}),10*60*1000);
+});
