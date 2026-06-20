@@ -54,7 +54,11 @@ const BRANDS = {
   "fortis":      { buy:[40,200],  sell:[200,900],  liq:"media", note:"Storico svizzero poi spazio. Vintage sottovalutati." },
   "favre-leuba": { buy:[150,800], sell:[1500,6000],liq:"bassa", note:"Bivouac altimetro. Manifattura, sleeper tecnico raro." },
   "moeris":      { buy:[20,150],  sell:[100,600],  liq:"bassa", note:"Base onesta. Ogni tanto crono o oro interessante." },
-  "ernest borel":{ buy:[30,150],  sell:[150,500],  liq:"media", note:"Cocktail/Kaleidoscope = liquidita mercato orientale." }
+  "ernest borel":{ buy:[30,150],  sell:[150,500],  liq:"media", note:"Cocktail/Kaleidoscope = liquidita mercato orientale." },
+  "eska":        { buy:[40,200],  sell:[150,500],  liq:"media", variant:"Se e' il diver AMPHIBIAN 600 (Marina FR, paragonato al Fifty Fathoms) = grail raro, migliaia. Crono Valjoux 22 a colonne = premio.", note:"S.Kocher Grenchen 1918, manifattura onesta dress+crono. Rilanciato meta' anni 2020 = catalizzatore. Tardi = base ETA; sorella Royce." },
+  "nicolet":     { buy:[40,250],  sell:[150,700],  liq:"bassa", variant:"Crono con Landeron 39 / Valjoux a COLONNE o oro 18k = premio (300-1200). NB: Charles Nicolet Tramelan VINTAGE != Armand Nicolet moderno (boutique 7750).", note:"Charles Nicolet, Tramelan ~1920. Dress e crono onesti, oscuri. Verifica colonne lato pulsanti." },
+  "duward":      { buy:[30,150],  sell:[120,400],  liq:"media", variant:"Se e' doppia firma DUWARD + AQUASTAR (diver: 63/Deepstar/Calypsomatic/Continual compressor) vale molto di piu': 300-2000+; il Deepstar crono Valjoux 23 ancora di piu'.", note:"Importatore spagnolo che co-firmava svizzeri. Plain Duward dress = volume; il valore e' nelle doppie firme Aquastar." },
+  "lunesa":      { buy:[10,60],   sell:[40,150],   liq:"bassa", note:"Etablisseur di Bettlach (S.A. ~1946), volume tier basso, calibri base ETA/AS. ATTENZIONE: storia 'fondata 1777 Ginevra / manifattura' sui siti di vendita = marketing (pattern nome altisonante)." }
 };
 
 // normalizza testo per match (minuscolo, no accenti, no punteggiatura)
