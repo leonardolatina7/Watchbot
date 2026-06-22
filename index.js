@@ -41,6 +41,7 @@ const encyclopedicQueries = require('./encyclopedicQueries');
 const dealEngine = require('./dealEngine');
 const caliberDb = require('./caliberDatabase');
 const trademarkRadar = require('./trademarkRadar');
+const awardsRadar = require('./awardsRadar');
 const soldComps = require('./soldComps');
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
@@ -1458,9 +1459,11 @@ async function runGoldScan(mode = 'all') {
                 const sig = priceTracker.record(ai.brand, ai.model, priceEur);
                 try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
                 if (sig && sig.fireAlert && sig.status === 'dip') {
+                  const c = priceTracker.chartFor(sig.brand, sig.model);
                   await tg(
                     `\u{1F4C9}\u{1F525} <b>DIP DA COMPRARE \u2014 modello sotto del ${Math.abs(sig.changePct)}%</b>\n\n`+
                     `\u231A <b>${sig.brand} ${sig.model}</b>\n`+
+                    (c ? `<code>${c.spark}</code> \u2B07\uFE0F\n` : '')+
                     `\u{1F4CA} Storico: <b>\u20AC${sig.baseMed.toLocaleString('it-IT')}</b> \u2192 ora: <b>\u20AC${sig.recentMed.toLocaleString('it-IT')}</b> (${sig.changePct}%)\n\n`+
                     `\u{1F9E0} <b>Da investitore:</b> modello di qualit\u00E0 in saldo. Se i fondamentali tengono, \u00E8 il momento di ACCUMULARE e holdare.\n`+
                     `\u26A0\uFE0F Verifica che il calo sia di mercato, non un singolo pezzo scadente.\n\n`+
@@ -1468,9 +1471,11 @@ async function runGoldScan(mode = 'all') {
                   );
                 }
                 if (sig && sig.fireAlert && sig.status === 'peak') {
+                  const c = priceTracker.chartFor(sig.brand, sig.model);
                   await tg(
                     `\u{1F4C8}\u{1F525} <b>MODELLO IN CORSA \u2014 su del ${sig.changePct}%</b>\n\n`+
                     `\u231A <b>${sig.brand} ${sig.model}</b>\n`+
+                    (c ? `<code>${c.spark}</code> \u2B06\uFE0F\n` : '')+
                     `\u{1F4CA} Storico: <b>\u20AC${sig.baseMed.toLocaleString('it-IT')}</b> \u2192 ora: <b>\u20AC${sig.recentMed.toLocaleString('it-IT')}</b>\n\n`+
                     `\u{1F9E0} Se ce l'hai, \u00E8 il momento di vendere. Se non ce l'hai, comprare ora = entrare dopo la corsa.\n`
                   );
@@ -1827,6 +1832,12 @@ app.get('/api/radar/run', (req, res) => {
   res.json({ message: 'Radar marchi avviato', brands: trademarkRadar.loadBrands(brandWatchlist).length });
   trademarkRadar.checkAll(tg, brandWatchlist, { report: true }).catch(e => console.error('[TM-RADAR]', e.message));
 });
+
+// Radar premi & indie — lancio manuale
+app.get('/api/awards/run', (req, res) => {
+  res.json({ message: 'Radar premi/indie avviato', indieSeguiti: awardsRadar.TRACKED_INDIES.length });
+  awardsRadar.checkAll(tg, { report: true }).catch(e => console.error('[AWARDS]', e.message));
+});
 // ── VENDUTI REALI eBay: valore + liquidità per brand/model ──
 app.get('/api/comps', async (req, res) => {
   const { brand, model, price } = req.query;
@@ -1838,6 +1849,12 @@ app.get('/api/comps', async (req, res) => {
 });
 app.get('/api/mio/remove', (req, res) => res.json({ ok: priceTracker.removeFromPortfolio(req.query.id) }));
 app.get('/api/tracker/movers', (req, res) => res.json(priceTracker.topMovers(30)));
+// Manda su Telegram lo "studio mercato" a colpo d'occhio (sparkline + frecce)
+app.get('/api/tracker/report', (req, res) => {
+  const msg = priceTracker.telegramReport(Number(req.query.n) || 10);
+  res.json({ message: 'Report mercato inviato su Telegram' });
+  tg(msg).catch(e => console.error('[TRACKER-REPORT]', e.message));
+});
 app.get('/api/tracker/stats', (req, res) => res.json(priceTracker.stats()));
 app.get('/api/tracker/export', (req, res) => res.json(priceTracker.exportData()));
 // Watchlist marchi-azienda (Czapek & co.)
@@ -2155,6 +2172,10 @@ cron.schedule('0 6 * * *',()=>runDiscoveryScan().catch(()=>{}));
 cron.schedule('30 */2 * * *',()=>runFlipCiecoScan().catch(e=>console.error('[FLIP CIECO]',e.message)));
 // Radar marchi: 2 volte al mese (giorno 1 e 15, ore 8) — il segnale catalizzatore
 cron.schedule('0 8 1,15 * *',()=>trademarkRadar.checkAll(tg, brandWatchlist, { report:true }).catch(e=>console.error('[TM-RADAR]',e.message)));
+// Radar premi & indie (GPHG, LV Watch Prize, Only Watch + indie seguiti): ogni lunedì ore 9
+cron.schedule('0 9 * * 1',()=>awardsRadar.checkAll(tg).catch(e=>console.error('[AWARDS]',e.message)));
+// Studio mercato a colpo d'occhio (sparkline + frecce su/giù): ogni lunedì ore 9:30
+cron.schedule('30 9 * * 1',()=>{ const m=priceTracker.telegramReport(10); if(m) tg(m).catch(e=>console.error('[TRACKER-REPORT]',e.message)); });
 cron.schedule('0 */4 * * *',async()=>{
   for (const item of db.watchlist.filter(w=>w.active)){
     try{

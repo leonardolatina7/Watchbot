@@ -43,7 +43,7 @@ const BRAND_WATCHLIST = {
   'excelsior park':    { status:'in_riscoperta', studyOnly:true, tesi:'Manifattura pura di crono (motori per Gallet e GP), fallita 1983, produzione minuscola. Una UG in miniatura senza ancora il compratore.' },
   'wittnauer':         { status:'in_riscoperta', studyOnly:true, tesi:'Stesso Valjoux 72 di Heuer/Daytona a un terzo del prezzo. Il mercato USA li sta scoprendo.' },
   'lemania':           { status:'in_riscoperta', studyOnly:true, tesi:'La manifattura dietro lo Speedmaster e Patek. I crono a marchio proprio sono purissima manifattura quasi ignorata.' },
-  'favre-leuba':       { status:'in_riscoperta', studyOnly:true, tesi:'Seconda marca svizzera piu antica, primo orologio meccanico con altimetro (Bivouac). Sleeper tecnico raro.' },
+  'favre-leuba':       { status:'in_riscoperta', studyOnly:true, tesi:'Seconda marca svizzera piu antica, primo orologio meccanico con altimetro (Bivouac). Sleeper tecnico raro. CATALIZZATORE 2026: rilanciata da Titan Group (India), debutto a Watches&Wonders con Harpoon Revival = il rilancio fa pubblicita agli ORIGINALI vintage (Bivouac/Bathy). Comprare il vintage ora, prima che salga.' },
   'wakmann':           { status:'in_riscoperta', studyOnly:true, tesi:'Crono Valjoux (7733/72) spesso co-firmati Breitling. Fratello americano sottovalutato dei Breitling vintage.' },
   'ollech wajs':       { status:'in_riscoperta', studyOnly:true, tesi:'Diver svizzero anni 60-70 venduto per corrispondenza, robusto e raro. Riscoperto da OW rilancio moderno. Originali ancora a buon prezzo.' },
   'zodiac':            { status:'in_riscoperta', studyOnly:true, tesi:'Sea Wolf vintage = uno dei primi diver di serie. ATTENZIONE: oggi Fossil produce Zodiac moderni, solo i vintage anni 50-70 contano.' },
@@ -149,6 +149,11 @@ const BRAND_WATCHLIST = {
   // La carne del \"nord\" è britannica, NON scandinava. Qui i pochi veri.
   'halda':            { status:'in_riscoperta', studyOnly:true, tesi:'Il più antico orologiaio svedese (1887, Henning Hammarlund, Svängsta): orologi da tasca e strumenti di precisione per le ferrovie svedesi. Produzione originale cessata a inizio \'900, nome rilanciato 2009. SOLO il vintage vero (tasca/strumenti) conta, raro e da nicchia. Il moderno modulare è altra cosa.' },
   'jacob jensen':     { status:'in_riscoperta', studyOnly:true, tesi:'Danimarca, 1958: design-icona (estetica Bang&Olufsen). ATTENZIONE: quasi tutto QUARZO = da collezione di design, non da flip meccanico. Valore solo nei pezzi-design riconosciuti, mercato di nicchia.' },
+
+  // ── DORMIENTI / CANDIDATI RILANCIO (radar, NON growth indie) ──
+  'jeanrichard':      { status:'in_riscoperta', studyOnly:true, tesi:'Sister-brand economica di Girard-Perregaux (Sowind/Kering), oggi DORMIENTE; scorporata al management nel 2022 con GP/Ulysse Nardin. NON e un indie da rivalutazione: nome storico (Daniel JeanRichard, padre del Giura) su marchio moderno morto. Modern (Terrascope/Aquascope/JR1000) = solo FLIP a forte sconto. Tienilo nel RADAR rilanci tipo UG/Nivada: se deposita marchi nuovi, occhio.' },
+  'jean richard':     { status:'in_riscoperta', studyOnly:true, tesi:'(alias) vedi jeanrichard.' },
+  'daniel jeanrichard':{ status:'in_riscoperta', studyOnly:true, tesi:'(alias) vedi jeanrichard. Il nome storico vale piu del marchio moderno.' },
 };
 
 // ── INDIPENDENTI MODERNI — eccezione al filtro "solo vintage" ──
@@ -169,6 +174,124 @@ const MODERN_INDIE_BRANDS = {
   'moser':             { tesi:'(alias) vedi h. moser.' },
   'atelier wen':       { tesi:'Pionieri del TANTALIO di serie (Perception Hong, Inflection full-tantalum con movimento GP e grand feu). Da $700 a $30k in 7 anni. I primi Perception acciaio/titanio usati (2-3k) = la "prima serie" da prendere.' },
   'sarpaneva':         { tesi:'Indie finlandese di Stepan Sarpaneva: quadranti-luna scolpiti (Korona/Supermoon), estetica nordica inconfondibile, produzione minuscola. L unico vero collezionabile scandinavo, ma e MODERNO indie, non vintage: trattalo come azione growth.' },
+
+  // ── INDIE INVESTIMENTO (lista Leonardo giu 2026) — TIER 1: holy grail ──
+  // Tesi di fondo: comprare le PRIME SERIE / souscription (come i Polerouter
+  // pre-boom). Firma riconosciuta + produzione minuscola + lista d attesa.
+  'simon brette':      { tesi:'TIER 1 holy grail. Ex-Chronode/MB&F, GPHG Revelation 2023. ~12 pezzi/anno, prenotato oltre il 2030; gia da retail a 75-150k in asta. Prendi QUALUNQUE esemplare, le souscription/prime serie sono il massimo.' },
+  'raul pages':        { tesi:'TIER 1. Vincitore Louis Vuitton Watch Prize 2024 (RP1 scappamento a detente, grail cronometria). 4-5 pezzi/anno, CHF 85k. Catalizzatore LVMH vivo. Buy&hold qualsiasi pezzo.' },
+  'raul pages ':       { tesi:'(alias) vedi raul pages.' },
+  'pages':             { tesi:'(alias) vedi raul pages (Raúl Pagès).' },
+  'luca soprana':      { tesi:'TIER 1 known-unknown. La mano dietro Jacob&Co Astronomia, Vianney Halter, il revival Derek Pratt. Nome proprio ~10 pezzi/anno (Time Only). Illiquido ma altissimo: prime serie = il pezzo.' },
+  'soprana':           { tesi:'(alias) vedi luca soprana.' },
+  'gronefeld':         { tesi:'TIER 1. Fratelli olandesi (Horological Brothers), formati a Renaud&Papi/AP. Piu GPHG vinti (Parallax, 1941 Remontoire, Gronograaf). ~70-80 pezzi/anno, liste lunghe. One Hertz dead-seconds = firma. Buy&hold.' },
+  'gronefeld brothers':{ tesi:'(alias) vedi gronefeld.' },
+  'krayon':            { tesi:'TIER 1 holy grail. Remi Maillat: complicazioni poetiche (Everywhere alba-tramonto, Anyday). GPHG. Produzione minima, tecnica vera.' },
+  'greubel forsey':    { tesi:'TIER 1 vertice. Cronometria/tourbillon estremi, ultra-rari. Downside bassissimo ma prezzi gia stratosferici: upside in % minore. Hold di qualita.' },
+  'ferdinand berthoud':{ tesi:'TIER 1. Chopard, cronometria fusee-chaine, GPHG. Ultra-raro e costoso. Hold di prestigio piu che growth esplosivo.' },
+
+  // ── TIER 2: forte potenziale / value (firma seria, prezzo umano) ──
+  'haute rive':        { tesi:'TIER 2 newcomer forte. Stephane von Gunten (ex Patek/Ulysse Nardin/GP, 30+ brevetti). Honoris: riserva 1000 ore, CHF 148k, ~10 pezzi/anno. Entrare presto sulle prime serie.' },
+  'haute-rive':        { tesi:'(alias) vedi haute rive.' },
+  'armin strom':       { tesi:'TIER 2 VALUE. Manifattura vera (risonanza, sistemi propri) a prezzo umano per la qualita. Uno dei migliori rapporti qualita/prezzo tra gli indie.' },
+  'schwarz etienne':   { tesi:'TIER 2 VALUE. Manifattura propria con micro-rotore, sottovalutata. Qualita da grande nome a prezzo accessibile.' },
+  'arnold & son':      { tesi:'TIER 2. Nome storico inglese enorme (John Arnold), manifattura, oggi a sconto sul secondario = gioco di recupero. STRATEGIA: oltre al moderno, CACCIA IL VINTAGE/early del nome storico.' },
+  'arnold and son':    { tesi:'(alias) vedi arnold & son.' },
+  'emmanuel bouchet':  { tesi:'TIER 2. Complication One, ex-MB&F/HYT. Firma vera, di nicchia, produzione minima.' },
+  'martin braun':      { tesi:'TIER 2. Complicazioni astronomiche (equazione del tempo), tornato in attivita. Di nicchia ma firma riconosciuta.' },
+
+  // ── TIER 3: emergenti tipo Rexhepi (potenziale non provato, ILLIQUIDI) ──
+  'cleguer':           { tesi:'TIER 3 emergente. Mathieu Cleguer (Bretagna), parte come incisore. Giovane indie, illiquido: scommessa, entra solo a prezzo giusto.' },
+  'klanic':            { tesi:'TIER 3 emergente. Indie visto a Ginevra 2026. Da osservare, illiquido.' },
+  'holthinrichs':      { tesi:'TIER 3 emergente. OLANDESE (non tedesco), casse stampate in 3D, design innovativo. Nicchia, illiquido.' },
+  'zeitwinkel':        { tesi:'TIER 3. SVIZZERO (non tedesco), manifattura propria. Value/emergente, da osservare.' },
+  'laine':             { tesi:'TIER 3 emergente. Torsti Laine (Finlandia), complicazioni a prezzo piu accessibile. Illiquido.' },
+  'edouard koehn':     { tesi:'TIER 3. Marchio di famiglia, maestro orologiaio dal 1891, rilanciato classico. Da capire la trazione.' },
+  'koehn':             { tesi:'(alias) vedi edouard koehn.' },
+  'lyrique':           { tesi:'TIER 3 da seguire. NON e un atelier-firma (tipo Rexhepi): e un orologio costruito coi migliori fornitori-ombra del settore (Fiedler lancette = quelli di Rolex, Metalem quadrante, AGENHOR movimento, base dell AgenGraphe di Moser/Singer). Etude No.1 solo tempo svizzero. Fondamentali tecnici veri, ma manca la firma del singolo maestro e la lista d attesa pluriennale: trazione e liquidita da dimostrare. Occhio alle prime serie se il progetto decolla.' },
+  'lirique':           { tesi:'(alias, ortografia errata) vedi lyrique (Lyrique Etude).' },
+
+  // ════ TIER 3 — LA CANTERA (giu 2026): emergenti dove c'e ancora spazio ════
+  // INDIE veri (firma/manifattura) = hold/growth, prendi le prime serie.
+  'petermann bedat':   { tesi:'TIER 3 alto (quasi 2). Gael Petermann & Florian Bedat, formati A.Lange + Dominique Renaud. Ref.1967 seconde morte, GPHG. PROVA: un 1967 acciaio in asta CHF 215.900 (stima 40-80k). Authorized: A Collected Man/Hour Glass. Le prime serie sono il pezzo.' },
+  'sylvain pinaud':    { tesi:'TIER 3 alto. Meilleur Ouvrier de France 2019, GPHG Revelation 2022. Origine in asta CHF 165.100 (stima 60-120k). Firma in forte ascesa.' },
+  'auffret':           { tesi:'TIER 3 caldo. Theo Auffret (Auffret Paris), Young Talent FHH/Journe 2018, Tourbillon a Paris (souscription), semifinalista LV Prize. Finissaggio charbonnage. Prime serie.' },
+  'theo auffret':      { tesi:'(alias) vedi auffret.' },
+  'habring':           { tesi:'TIER 3 VALUE (il piu accessibile). Maria & Richard Habring (Austria): foudroyante/seconde morte a prezzi reali (~$9-10k). Orologeria vera, non hype. Ottimo ingresso.' },
+  'kudoke':            { tesi:'TIER 3 value. Stefan Kudoke (Germania), incisione a mano, GPHG Petite Aiguille. Da ~$9k. Accessibile, firma riconosciuta.' },
+  'kurono':            { tesi:'TIER 3 liquido. Linea accessibile di Hajime Asaoka: serie minuscole, sold-out istantaneo, secondario stabile. Il miglior rapporto entrata/liquidita: flip+hold.' },
+  'kurono tokyo':      { tesi:'(alias) vedi kurono.' },
+  'trilobe':           { tesi:'TIER 3. Parigi 2018, display del tempo non convenzionale (Les Matinaux/Nuit Fantastique). Gia considerati grail, lista d attesa ~6 mesi, ~20k. Design-driven.' },
+  'hajime asaoka':     { tesi:'TIER 2-3 grail JP. Top indie giapponese AHCI (Tsunami, Project T, tourbillon). Produzione minima, molto ricercato.' },
+  'andreas strehler':  { tesi:'TIER 2-3. Maestro svizzero (lune piu precise al mondo); il Sirna porta la sua firma a un pubblico piu ampio. Tecnico purissimo.' },
+  'pascal coyon':      { tesi:'TIER 3 value under-radar. Francese (Bayonne), cronometro a finissaggio superlativo su base Unitas 6498 pesantemente modificata. Ordine diretto, attesa. Accessibile per la qualita.' },
+  'cyril brivet-naudot':{ tesi:'TIER 3 grail-emergente. Fa TUTTO a mano senza CNC (Eccentricity), AHCI. Produzione quasi nulla, illiquido ma altissima stima tra i cognoscenti.' },
+  'christian klings':  { tesi:'TIER 3 ultra-raro. Tedesco, pezzi bespoke fatti a mano, finissaggio da leggenda. Quasi introvabile, da conoscitori assoluti.' },
+  'dominique renaud':  { tesi:'TIER 2-3 grail. La "R" di Renaud & Papi (il fornitore di mezza alta orologeria). Pulse60, batte una volta al secondo. Nome enorme tra gli addetti.' },
+  'romain gauthier':   { tesi:'TIER 2. Indie affermato (Logical One, C by Romain Gauthier ed. titanio di 88). Manifattura propria, finissaggio top.' },
+  'kikuchi nakagawa':  { tesi:'TIER 3 JP. Duo giapponese, classico raffinatissimo, molto ricercato, produzione minima.' },
+  'naoya hida':        { tesi:'TIER 3 JP caldo. Quadranti a settore inciso, calibri base rilavorati a mano. Lista d attesa, secondario forte.' },
+  'lang & heyne':      { tesi:'TIER 2-3 DE. Dresda, manifattura in-house, classico sassone di altissimo livello. Sottovalutato fuori dalla Germania.' },
+  'lang und heyne':    { tesi:'(alias) vedi lang & heyne.' },
+  'moritz grossmann':  { tesi:'TIER 2-3 DE. Glashutte, manifattura in-house, finissaggio sassone. Buon value vs A.Lange.' },
+  'ressence':          { tesi:'TIER 2-3 cult. Display orbitale a olio (niente lancette classiche), Type 1/3/5. Identita fortissima, secondario solido.' },
+  'konstantin chaykin':{ tesi:'TIER 2-3 LIQUIDO. Il Joker (volto a ore vaganti) e un fenomeno di culto: tra gli indie piu liquidi, secondario caldo e premi sulle serie.' },
+  'laurent ferrier':   { tesi:'TIER 2 affermato. Ex direttore tecnico Patek; Galet/Sport Auto, micro-rotore, scappamento naturale. Qualita Patek-level, comunita fedele.' },
+  'garrick':           { tesi:'TIER 3 English. Fatti a mano in Inghilterra (Norfolk), finissaggio in-house in crescita. Nicchia britannica emergente.' },
+  'david candaux':     { tesi:'TIER 3. Svizzero (Half Hunter, tourbillon inclinato). Firma tecnica, produzione minima.' },
+  'thomas prescher':   { tesi:'TIER 3. Maestro del tourbillon a tre assi e dei pezzi complicati. Da conoscitori, illiquido.' },
+  'j.n. shapiro':      { tesi:'TIER 3 USA. Primo orologio interamente made-in-USA dal 1969 (Resurgence), quadranti guilloche, movimento in-house. Semifinalista LV. Storia forte.' },
+  'shapiro':           { tesi:'(alias) vedi j.n. shapiro.' },
+  'naoya hida & co':   { tesi:'(alias) vedi naoya hida.' },
+  'fam al-hut':        { tesi:'TIER 3 speculativo (Cina). Mobius, sostenuto da Revolution (Maison de Revolution), semifinalista LV. Frontiera cinese in ascesa: scommessa.' },
+
+  // MICROBRAND DI HYPE (NON in-house): flip con premio sul secondario, non hold.
+  'furlan marri':      { tesi:'TIER 3 FLIP (microbrand, non in-house). Mr Grey & i crono: sold-out, premio sul secondario. Si compra a retail e si gira. Non e rivalutazione lunga: flip di hype.' },
+  'baltic':            { tesi:'TIER 3 FLIP (microbrand). Aquascaphe/MR01 con liste d attesa; le PRIME edizioni si rivendono sopra. Liquido, capitale basso.' },
+  'ming':              { tesi:'TIER 3 (microbrand premium). Culto forte, secondario solido (alcune ref sopra retail). Tra i microbrand quello con piu tenuta di valore.' },
+  'studio underd0g':   { tesi:'TIER 3 FLIP (microbrand). Crono colorati di hype, sold-out, premio sul secondario alle uscite. Flip veloce.' },
+  'serica':            { tesi:'TIER 3 (microbrand). Field/diver francesi ben fatti, comunita in crescita. Flip/volume.' },
+  'lorier':            { tesi:'TIER 3 (microbrand). Diver/crono retro USA accessibili, seguito fedele. Volume/flip.' },
+  'unimatic':          { tesi:'TIER 3 (microbrand). Design utilitaristico milanese, edizioni limitate che si esauriscono. Flip di design.' },
+
+  // ════ NUOVI 2026 — i debutti e i nomi freschi (qui c'e il massimo upside) ════
+  'remy cools':        { tesi:'NUOVO HOT. Francese ~27 anni, Tourbillon Atelier; ex-Greubel Forsey (Hand Made 1), Young Talent FP Journe 2018, modello a souscription. Tra i giovani piu promettenti in assoluto: prendere prestissimo se possibile.' },
+  'aubert & ramel':    { tesi:'NUOVO 2026. Duo da Morteau (Thomas Aubert, Young Talent FP Journe 2024, + Alexis Ramel). Debutto Ourea: quasi tutto a mano, movimento in-house, finissaggio altissimo, 14 pezzi titanio CHF 72k. Debutto fortissimo.' },
+  'aubert et ramel':   { tesi:'(alias) vedi aubert & ramel.' },
+  'dunselman':         { tesi:'NUOVO 2026 (Olanda). Annelinde Dunselman, Black Tulip: time-only in-house, dettagli a tema tulipano, 10 pezzi, EUR 38k. Rara watchmaker donna con atelier proprio. Da seguire.' },
+  'manteio':           { tesi:'NUOVO. Alex Goetschi, Zeus: quadrante d impatto. Giovane indie emergente, da osservare.' },
+  'alan birchall':     { tesi:'NUOVO artigiano estremo (Giappone rurale): fa il 95% a mano con macchinari vintage anni 70. Produzione minuscola, da conoscitori. Illiquido ma unico.' },
+  'felipe pikullik':   { tesi:'NUOVA generazione (giovane indie citato tra i nomi emergenti da seguire). Verifica modelli/prezzi prima di entrare.' },
+  'minhoon yoo':       { tesi:'NUOVA generazione (giovane indie emergente). Da osservare.' },
+  'behrens':           { tesi:'NUOVO frontiera CINA. Primo marchio cinese a Watches&Wonders (2026); serie Ultralight, collab Vianney Halter (KWH Master). Capacita R&D/manifattura proprie. Scommessa sulla nuova ondata cinese: segui le prime serie e le collab.' },
+  'bianchet':          { tesi:'NUOVO-ish. Coppia ex-fintech, tourbillon ispirati a Sezione Aurea/Fibonacci. A Watches&Wonders 2026. Tecnico, di nicchia.' },
+  'charles girardier': { tesi:'NUOVO indie a Watches&Wonders 2026. Identita creativa propria. Da capire trazione.' },
+  'daniel roth':       { tesi:'RILANCIO (catalizzatore). Rinato sotto La Fabrique du Temps Louis Vuitton, ricostruito con cura (Tourbillon, Extra-Plat platino). Nome storico fortissimo; il rilancio fa salire anche i Daniel Roth VINTAGE originali: occhio a quelli.' },
+
+  // ── PEQUIGNET — manifattura francese con movimento proprio ──
+  'pequignet':         { tesi:'Manifattura FRANCESE col Calibre Royal in-house (raro: pochi francesi fanno il movimento). Brand storicamente in difficolta, piu volte rilanciato. La sostanza c e (movimento proprio), ma trazione/secondario deboli: piu value/flip che growth. Il Calibre Royal e la tesi, non il nome.' },
+  'pequinet':          { tesi:'(alias, ortografia errata) vedi pequignet.' },
+
+  // ════ ONDATA CINESE 2026 — la frontiera che quasi nessuno segue ancora ════
+  'fam al hut':        { tesi:'NUOVO sensazione CINA. Lukas Young & Xinyan Dai (2024, Chongqing->Shanghai). Mobius: tourbillon bi-assiale + ore saltanti + retrogrado, vince l Audacity Prize al GPHG 2025. Restano <few hundred/anno. La punta di diamante della nuova Cina: prime serie = scommessa forte.' },
+  'mgraver':           { tesi:'NUOVO CINA. Shiming Yang, Ventrallis: fatto a mano, semifinalista LV Watch Prize 2025-26. Emergente vero, illiquido.' },
+  'celadon':           { tesi:'CINA alta gamma. Benjamin Chee: smalti cloisonne + movimenti in-house del maestro AHCI Lin Yong Hua (CH1/CH5/CH4414 ore saltanti). Linea BCHH avant-garde da CHF 50k+. Arte+meccanica cinese di vertice.' },
+  'celadon hh':        { tesi:'(alias) vedi celadon.' },
+  'qin gan':           { tesi:'CINA artigiano raffinato (Chongqing). Solo-tempo e calendari dress finiti a mano (Pastorale). Tra i piu stimati indie cinesi: hand-finishing serio, prezzi ancora umani.' },
+  'lin yong hua':      { tesi:'CINA. Uno dei 3 cinesi riconosciuti AHCI. Movimenti in-house (CH1/CH5, Breguet overcoil, black polish) usati anche da Celadon. Maestro, base della nuova orologeria cinese.' },
+  'lyh':               { tesi:'(alias) vedi lin yong hua.' },
+  'logan kuan rao':    { tesi:'CINA (Guangzhou). Studio proprio, calibri unici creati da zero. Emergente da osservare.' },
+  'neo kung':          { tesi:'CINA. Orienta Chronograph. Giovane indie emergente.' },
+  'boyu tang':         { tesi:'CINA. Ha presentato il primo orologio a soli 17 anni: nome da segnare per il lungo periodo.' },
+  'peacock':           { tesi:'CINA value. Manifattura storica (Liaoning): tourbillon in-house con quadrante guilloche a mano a prezzi bassi per cio che e. Buon rapporto sostanza/prezzo, da conoscitori.' },
+  'kiu tai yu':        { tesi:'CINA storico/grail. Il padre dell orologeria indipendente cinese (mystery tourbillon), primo cinese AHCI. Pezzi rari e fondativi: valore storico.' },
+  'ma xushu':          { tesi:'CINA AHCI (2° cinese ammesso, 2015). Tourbillon cilindrici, lancette a pantografo, creazioni uniche. Da conoscitori.' },
+  'tan zehua':         { tesi:'CINA AHCI (2019). Ex restauratore, ossessionato dagli scappamenti: ha sviluppato il proprio Di-Axial. Tecnico puro, emergente.' },
+  'ciga design':       { tesi:'CINA microbrand. Shenzhen, design-forward accessibile (Seagull), ha vinto al GPHG nella categoria challenge. Flip/design, non haute.' },
+  'memorigin':         { tesi:'HONG KONG microbrand. Tourbillon accessibili (William Shum). Sub-brand Memoire piu alto. Volume/flip, non rivalutazione.' },
+
+  // ── GIAPPONE indie emergente ──
+  'quiet club':        { tesi:'GIAPPONE indie. Norifumi Seki (ex Young Talent FP Journe), Fading Hours: design poetico + sveglia che batte contro il retro del quadrante. Semifinalista LV. Da seguire.' },
 };
 
 function isModernIndie(brand) {

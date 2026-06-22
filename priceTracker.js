@@ -25,7 +25,9 @@
  */
 
 const fs = require('fs');
-const HISTORY_FILE = '/tmp/watchbot-pricehistory.json';
+const path = require('path');
+const DATA_DIR = process.env.DATA_DIR || '/tmp';
+const HISTORY_FILE = path.join(DATA_DIR, 'watchbot-pricehistory.json');
 
 // ── PARAMETRI (modificabili da Render se serve) ──
 const MIN_OBS_BASELINE = parseInt(process.env.TRACKER_MIN_OBS || '5');   // osservazioni minime per fidarsi
@@ -54,6 +56,7 @@ function load() {
 }
 function save() {
   try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(HISTORY_FILE, JSON.stringify({ history, portfolio }));
   } catch (e) { console.error('[TRACKER] save:', e.message); }
 }
@@ -242,10 +245,64 @@ function topMovers(limit = 20) {
 
 function exportData() { return { history, portfolio }; }
 
+// ════════════════════════════════════════════════════════════════
+// VISTA A COLPO D'OCCHIO — mini grafico testuale (sparkline) + freccia
+// Pensato per Telegram: niente immagini, solo testo che si vede ovunque.
+// ════════════════════════════════════════════════════════════════
+const SPARK = '▁▂▃▄▅▆▇█';
+function sparkline(prices) {
+  if (!prices || prices.length < 2) return '';
+  const p = prices.slice(-20);            // ultimi 20 punti, compatto
+  const lo = Math.min(...p), hi = Math.max(...p);
+  const span = (hi - lo) || 1;
+  return p.map(v => SPARK[Math.min(7, Math.floor(((v - lo) / span) * 7.999))]).join('');
+}
+function arrow(pct) { return pct <= -2 ? '⬇️' : (pct >= 2 ? '⬆️' : '➡️'); }
+
+// Mini scheda di un singolo modello (sparkline + freccia + da→a)
+function chartFor(brand, model) {
+  const key = modelKey(brand, model);
+  const h = key && history[key];
+  if (!h || h.obs.length < 2) return null;
+  const prices = h.obs.map(o => o.price);
+  const sig = computeSignal(key);
+  const pct = (sig && typeof sig.changePct === 'number') ? sig.changePct : 0;
+  return {
+    key, brand: h.brand, model: h.model,
+    spark: sparkline(prices),
+    arrow: arrow(pct), changePct: pct,
+    from: prices[0], to: prices[prices.length - 1],
+    n: prices.length, status: sig ? sig.status : 'building',
+  };
+}
+
+// Report "studio mercato" pronto per Telegram (HTML): i modelli che si muovono di più.
+function telegramReport(limit = 10) {
+  const movers = topMovers(limit);
+  const s = stats();
+  if (!movers.length) {
+    return `📊 <b>Studio mercato</b>\nAncora pochi dati certi: ${s.fullyTracked} modelli pronti, ${s.stillBuilding} in raccolta, ${s.totalObservations} osservazioni totali.\nServono ≥${MIN_OBS_BASELINE} avvistamenti per modello prima dei segnali.`;
+  }
+  let msg = '📊 <b>Studio mercato — chi si muove</b>\n<i>mediana ultimi ' + RECENT_DAYS + 'gg vs storico</i>\n\n';
+  for (const m of movers) {
+    const h = history[m.key];
+    const spark = h ? sparkline(h.obs.map(o => o.price)) : '';
+    const sign = m.changePct > 0 ? '+' : '';
+    msg += `${arrow(m.changePct)} <b>${m.brand} ${m.model}</b> ${sign}${m.changePct}%\n`;
+    if (spark) msg += `<code>${spark}</code> €${m.baseMed}→€${m.recentMed}\n`;
+    if (m.status === 'dip') msg += '🟢 sotto la media → possibile <b>COMPRA</b>\n';
+    else if (m.status === 'peak') msg += '🔴 sopra la media → possibile <b>VENDI</b>\n';
+    msg += '\n';
+  }
+  msg += `<i>${s.fullyTracked} modelli con dati certi · ${s.stillBuilding} in raccolta · ${s.totalObservations} osservazioni</i>`;
+  return msg;
+}
+
 module.exports = {
   load, save, record, computeSignal, modelKey,
   addToPortfolio, removeFromPortfolio, getPortfolio, checkPortfolioSell,
   stats, topMovers, exportData,
+  sparkline, chartFor, telegramReport,
   // costanti esposte per i messaggi
-  DIP_THRESHOLD, PEAK_THRESHOLD, RECENT_DAYS, BASELINE_DAYS,
+  DIP_THRESHOLD, PEAK_THRESHOLD, RECENT_DAYS, BASELINE_DAYS, MIN_OBS_BASELINE,
 };
