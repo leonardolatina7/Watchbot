@@ -35,11 +35,12 @@ const CATALYST_BRANDS = [
   'Universal Geneve', 'Vulcain', 'Cyma', 'Gallet', 'Vacheron Constantin',
   'Eberhard', 'Movado', 'Zenith', 'Nivada Grenchen', 'Croton',
   'Eterna', 'Longines', 'Omega', 'Heuer', 'Breitling', 'Tissot',
-  'Piaget', 'Mido', 'Wittnauer', 'Excelsior Park',
+  'Piaget', 'Mido', 'Wittnauer', 'Excelsior Park', 'Gruen',
+  'Girard-Perregaux', 'A. Lange & Sohne', 'IWC',
   // Indie moderni top tier (catalizzatori d'attenzione sul vintage)
   'Berneron', 'Akrivia Rexhepi', 'F.P. Journe', 'Czapek',
   'Atelier Wen', 'Ochs und Junior', 'Urban Jurgensen',
-  'Bradley Taylor watchmaker', 'Pequignet',
+  'Bradley Taylor watchmaker', 'Pequignet', 'Akhor',
 ];
 
 // ── PAROLE-CATALIZZATORE (IT + EN) ─────────────────────────
@@ -57,6 +58,10 @@ const CATALYST_KEYWORDS = [
   'acquisizione','acquisisce','nuovo proprietario','nuovo ceo',
   'anniversary','years of','celebrates',
   'anniversario','celebra',
+  'nour la lumière','nour la lumiere','akhor',
+  'gold melt','melt value','gold floor','melt squeeze','spot gold record',
+  'black gilt','gilt dial','salmon dial','sector dial',
+  'lange undervalued','lange resurgence',
   'gphg','auction record','record price','sells for',
   'record asta','battuto all\'asta',
   // Nomi degli WATCH SHOW: è lì che gli indie sconosciuti diventano hype.
@@ -160,7 +165,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
  * Tutto iniettato da index.js così riusa la persistenza esistente.
  */
 async function runCatalystWatch(deps = {}) {
-  const { tg, db, markAlerted, alreadyAlerted, saveState } = deps;
+  const { tg, db, markAlerted, alreadyAlerted, saveState, onCatalyst } = deps;
   if (!tg || !db || !markAlerted || !alreadyAlerted) {
     console.error('[catalyst] dipendenze mancanti — chiamare con { tg, db, markAlerted, alreadyAlerted, saveState }');
     return { error: 'deps mancanti' };
@@ -195,6 +200,11 @@ async function runCatalystWatch(deps = {}) {
       await tg(formatAlert(item));
       markAlerted(fp);
       sent++;
+      // Registra l'evento catalizzatore per il tracking dell'effetto sui prezzi,
+      // SALVO i fashion-revival (non sono catalizzatori di valore reale).
+      if (typeof onCatalyst === 'function' && !isFashionRevival(item)) {
+        try { onCatalyst({ brand: item.brand, type: 'news', title: item.title }); } catch {}
+      }
       await sleep(350); // rate limit Telegram
     } catch (e) {
       console.error('[catalyst] invio fallito:', e.message);

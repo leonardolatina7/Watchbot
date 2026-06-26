@@ -1,6 +1,6 @@
 {
-  "name": "watchbot-v11",
-  "version": "11.0.0",
+  "name": "watchbot",
+  "version": "12.4.0",
   "main": "index.js",
   "scripts": { "start": "node --max-old-space-size=460 --expose-gc index.js" },
   "dependencies": {

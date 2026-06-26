@@ -44,6 +44,8 @@ const trademarkRadar = require('./trademarkRadar');
 const awardsRadar = require('./awardsRadar');
 const soldComps = require('./soldComps');
 const catalystWatch = require('./catalystWatch'); // ── RADAR NEWS / CATALIZZATORI (news prodotto/azienda) ──
+const portfolio = require('./portfolio'); // ── MEMORIA DECISIONI + P&L (compro/passo/vendo) ──
+const catalystTracking = require('./catalystTracking'); // ── STORICO BRAND + EFFETTO CATALIZZATORE ──
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
 const blindHunter = require('./blindHunter');
@@ -473,6 +475,19 @@ function detectMetal(t) {
   if (punzoneVicinoOro) return '18k';
 
   return null;
+}
+// ── TESI MELT-SCARCITY: marchi nobili solo-tempo oro che vengono fusi per il
+//    peso → scarsità futura. Se il titolo combacia, aggiungo un suggerimento
+//    operativo all'alert oro: non è un flip, è un accumulo da tenere. ──
+const MELT_SCARCITY_BRANDS = ['omega','longines','iwc','universal','movado','vacheron','patek','girard','jaeger','lecoultre','zenith'];
+function meltScarcityHint(title) {
+  const s = String(title||'').toLowerCase();
+  const isNoble = MELT_SCARCITY_BRANDS.some(b => s.includes(b));
+  const isCrono = /(chrono|crono|valjoux|venus|landeron|lemania|el primero)/.test(s);
+  const isLadies = /(donna|signora|lady|ladies|damen|femme)/.test(s);
+  if (!isNoble && !isLadies) return '';
+  if (isCrono) return ''; // i crono da collezione NON rientrano nella tesi melt
+  return `\u{1F4A1} <b>MELT-SCARCITY PLAY:</b> dress/ladies oro 18k marchio nobile = categoria che viene FUSA per il peso. Compra vicino al melt (floor=rischio ~zero) SOLO con quadrante originale + cassa non lucidata: i sopravvissuti salgono per scarsità 3-5 anni. Da TENERE, non flippare.\n`;
 }
 async function calcMetal(title, priceEur) {
   const metal = detectMetal(title);
@@ -1087,6 +1102,17 @@ const QUERIES_BLOCK_C = ['Ollech Wajs vintage','Airain Type 20','Yema Yachtingra
 const QUERIES_BLOCK_D = ['orologio doppia firma Tiffany vintage','Serpico Laino cronografo','orologio Hausmann Roma vintage','orologio Cartier dial vintage','Universal Geneve Tri-Compax oro','Movado M95 cronografo'];
 const QUERIES_BLOCK_E = ['cronografo quadrante tropicale Valjoux','orologio gilt dial cronografo vintage','Omega Constellation pie pan','orologio sector dial cronografo','Omega Seamaster 300 vintage','cronografo oro 18k Valjoux 72'];
 const QUERIES_BLOCK_F = ['Angelus Chronodato','Minerva cronografo vintage','Hanhart flyback','Zodiac Sea Wolf','Aquastar Deepstar','Seiko 6139 chronograph','Seiko 62MAS diver'];
+// ── BLOCCO MELT-SCARCITY (tesi giu 2026): dress oro 18k solo-tempo marchi nobili
+//    + ladies' gold anni 70-80. Sono i pezzi che vengono FUSI per il peso →
+//    scarsità futura. Query mirate a pescarli vicino al melt floor. ──
+const QUERIES_BLOCK_G_MELT = [
+  'Omega oro 18k solo tempo vintage','Longines oro 18k vintage dress',
+  'IWC oro 18k vintage','Universal Geneve oro 18k vintage',
+  'Movado oro 18k vintage','Vacheron Constantin oro 18k solo tempo',
+  'Patek Philippe Calatrava oro vintage','orologio oro 18k donna vintage anni 70',
+  'ladies gold watch 18k vintage','orologio oro 18k signora vintage',
+  'Girard Perregaux oro 18k vintage','Jaeger LeCoultre oro 18k vintage',
+];
 // BLOCCO G — le query ENCICLOPEDICHE generate dalla watchlist (vedi encyclopedicQueries.js).
 const QUERIES_G_CORE = ['Wittnauer Valjoux 72 cronografo','Excelsior Park 40 cronografo','Enicar Sherpa Graph','Gallet Multichron 12','Universal Geneve Compax'];
 // Il pool si COSTRUISCE dall'Enciclopedia: marchi+modelli+calibri precisi e
@@ -1128,7 +1154,7 @@ function getGoldQueries() {
   scanCounter++;
   const tick = rotationTick(); // driver di rotazione durevole (vedi rotationTick)
   const night = isNightBoost();
-  const rotating = [QUERIES_BLOCK_A, QUERIES_BLOCK_B, QUERIES_BLOCK_C, QUERIES_BLOCK_D, QUERIES_BLOCK_E, QUERIES_BLOCK_F];
+  const rotating = [QUERIES_BLOCK_A, QUERIES_BLOCK_B, QUERIES_BLOCK_C, QUERIES_BLOCK_D, QUERIES_BLOCK_E, QUERIES_BLOCK_F, QUERIES_BLOCK_G_MELT];
   // Di notte: TRE blocchi tematici diversi a rotazione; di giorno: due.
   const themed = night
     ? [...rotating[tick % rotating.length], ...rotating[(tick+2) % rotating.length], ...rotating[(tick+4) % rotating.length]]
@@ -1283,6 +1309,7 @@ async function runGoldScan(mode = 'all') {
                 `\u26A0\uFE0F Conferma SEMPRE: caratura punzonata (750/18k) + peso della SOLA cassa. Ghiera/corona/indici in oro o cappato = NON massiccio.\n`+
                 (metal.diffPct>0 ? `\u{1F4C9} Gi\u00E0 <b>\u2212${metal.diffPct}% sotto il metallo</b>\n` : metal.diffPct===0 ? `\u2696\uFE0F <b>Esattamente al valore del metallo</b>\n` : `\u{1F4CA} Solo ${Math.abs(metal.diffPct)}% sopra il metallo\n`)+
                 (compraSubito ? `\n\u{1F512} <b>Acquisto sicuro:</b> paghi quanto vale il metallo, e l'oro storicamente sale nel lungo periodo.\n` : `\n\u{1F3AF} <b>Tratta.</b> Offri ~\u20AC${offerta.toLocaleString('it-IT')}: guadagno \u20AC${guadagnoSeOfferta.toLocaleString('it-IT')} garantito dal metallo.\n`)+
+                meltScarcityHint(item.title)+
                 `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
                 `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
                 feedbackLinks(null, item.url, item.title, priceEur)
@@ -1411,6 +1438,7 @@ async function runGoldScan(mode = 'all') {
                 feedbackLinks(ai.brand, item.url, item.title, priceEur)
               );
               try { if (ai.brand && ai.model && ai.brand!=='?' && ai.model!=='?') priceTracker.record(ai.brand, ai.model, priceEur); } catch {}
+              try { if (ai.brand && ai.brand!=='?') catalystTracking.recordPrice(ai.brand, priceEur); } catch {}
               continue;
             }
 
@@ -1436,6 +1464,7 @@ async function runGoldScan(mode = 'all') {
               );
               // Registro comunque nello storico prezzi (serve al tracker)
               try { if (ai.brand && ai.model && ai.brand!=='?' && ai.model!=='?') priceTracker.record(ai.brand, ai.model, priceEur); } catch {}
+              try { if (ai.brand && ai.brand!=='?') catalystTracking.recordPrice(ai.brand, priceEur); } catch {}
               continue;
             }
 
@@ -1458,6 +1487,7 @@ async function runGoldScan(mode = 'all') {
                   }
                 }
                 const sig = priceTracker.record(ai.brand, ai.model, priceEur);
+                try { if (ai.brand && ai.brand!=='?') catalystTracking.recordPrice(ai.brand, priceEur); } catch {}
                 try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
                 if (sig && sig.fireAlert && sig.status === 'dip') {
                   const c = priceTracker.chartFor(sig.brand, sig.model);
@@ -1553,6 +1583,7 @@ async function runGoldScan(mode = 'all') {
           seenUrls.add(nu); markAlerted(fp); saveState();
           foundVintage++;
           try { priceTracker.record(vintage.brand, vintage.model, priceEur); } catch {}
+          try { if (vintage.brand) catalystTracking.recordPrice(vintage.brand, priceEur); } catch {}
           db.vintageDeals.push({ id:nid(), platform:item.platform, title:item.title, price:priceEur, brand:vintage.brand, model:vintage.model, caliber:vintage.caliber, valueLow:vintage.valueLow, valueHigh:vintage.valueHigh, discountVsLow:vintage.discountVsLow, desirability:vintage.desirability, grail:vintage.grail, url:item.url, location:item.location||'', foundAt:new Date().toISOString() });
           const grailTag = vintage.grail ? '\u{1F451} GRAIL ' : '';
           const stars = '\u2B50'.repeat(Math.min(Math.round(vintage.desirability/2),5));
@@ -1791,6 +1822,54 @@ app.get('/api/gold-scan',(req,res) => { res.json({message:'Scansione avviata',qu
 app.get('/api/arbitrage',(req,res) => { const all=[...db.arbitrage,...db.nearArbitrage].sort((a,b)=>b.diffPct-a.diffPct); res.json(all.slice(0,200)); });
 app.get('/api/arbitrage/real',(req,res) => res.json([...db.arbitrage].sort((a,b)=>b.diffPct-a.diffPct)));
 app.get('/api/arbitrage/near',(req,res) => res.json([...db.nearArbitrage].sort((a,b)=>b.diffPct-a.diffPct)));
+
+// ── PORTAFOGLIO: memoria decisioni + P&L ───────────────────────────────────
+// Registra: /api/pf/record?stato=comprato&brand=GP&model=Lotto2496&prezzo=400&piattaforma=bidinside&note=quadrante+originale
+//   stato = comprato | passato | venduto. costi accessori calcolati in auto per piattaforma (override con &costi=NN)
+app.get('/api/pf/record',(req,res) => {
+  const q = req.query;
+  const it = portfolio.record({
+    stato:q.stato, brand:q.brand, model:q.model, prezzo:q.prezzo,
+    piattaforma:q.piattaforma, calibro:q.calibro, metallo:q.metallo,
+    note:q.note, verdetto:q.verdetto,
+    costiManuali: (q.costi!=null && q.costi!=='') ? q.costi : null,
+  });
+  res.json({ ok:true, registrato:it });
+});
+// Vendi (calcola P&L): /api/pf/sold?id=pf_xxx&prezzo=650&costi=10
+app.get('/api/pf/sold',(req,res) => {
+  const it = portfolio.markSold(req.query.id, req.query.prezzo, req.query.costi||0);
+  if (!it) return res.status(404).json({ ok:false, error:'id non trovato' });
+  res.json({ ok:true, venduto:it });
+});
+// Elimina: /api/pf/remove?id=pf_xxx
+app.get('/api/pf/remove',(req,res) => {
+  const ok = portfolio.remove(req.query.id);
+  res.json({ ok });
+});
+// Sintesi JSON
+app.get('/api/pf',(req,res) => res.json(portfolio.summary()));
+// Report Telegram on-demand
+app.get('/api/pf/report',(req,res) => {
+  const m = portfolio.telegramReport();
+  if (m) tg(m).catch(e=>console.error('[PF-REPORT]',e.message));
+  res.json({ ok:true, inviato: !!m });
+});
+
+// ── EFFETTO CATALIZZATORI: storico brand + reazione prezzi alla news ────────
+app.get('/api/catalyst-tracking',(req,res) => res.json(catalystTracking.summary()));
+app.get('/api/catalyst-tracking/measure',(req,res) => { const n = catalystTracking.measureAll(); res.json({ ok:true, finestreAggiornate:n }); });
+app.get('/api/catalyst-tracking/report',(req,res) => {
+  const m = catalystTracking.telegramReport(10);
+  if (m) tg(m).catch(e=>console.error('[CAT-TRACK-REPORT]',e.message));
+  res.json({ ok:true, inviato: !!m });
+});
+// Registrazione manuale evento (es. catalizzatore noto a mano):
+// /api/catalyst-tracking/event?brand=Universal+Geneve&type=relaunch&title=UG+2026
+app.get('/api/catalyst-tracking/event',(req,res) => {
+  const ev = catalystTracking.recordEvent({ brand:req.query.brand, type:req.query.type||'manual', title:req.query.title });
+  res.json({ ok:!!ev, evento:ev });
+});
 app.get('/api/discovery/scan',(req,res) => { res.json({message:'Analisi avviata',brands:SEED_BRANDS.length}); runDiscoveryScan().catch(()=>{}); });
 app.get('/api/flip-cieco',(req,res) => { res.json({message:'Flip cieco avviato',tetto:genericQueries.FLIP_CIECO_MAX,vision_model:blindHunter.GROQ_VISION_MODEL}); runFlipCiecoScan().catch(e=>console.error('[FLIP CIECO]',e.message)); });
 app.get('/api/discovery',(req,res) => { if (db.discoveries.length>0) return res.json(db.discoveries); res.json(SEED_BRANDS.map(b=>({brand:b,emergingScore:{score:0,windowLabel:'— Avvia analisi',thesis:'Clicca Avvia Analisi.',keySignal:'—',breakdown:{}},signals:{},analyzedAt:null}))); });
@@ -2192,9 +2271,13 @@ cron.schedule('0 9 * * 1',()=>awardsRadar.checkAll(tg).catch(e=>console.error('[
 // Legge Google News per ogni brand in watchlist+indie e avvisa su Telegram
 // quando esce un catalizzatore (rilancio, nuovo modello, edizione limitata,
 // acquisizione, anniversario, record d'asta). Anti-ripetizione via db.alertedFps.
-cron.schedule('0 7,19 * * *',()=>catalystWatch.runCatalystWatch({ tg, db, markAlerted, alreadyAlerted, saveState }).catch(e=>console.error('[CATALYST]',e.message)));
+cron.schedule('0 7,19 * * *',()=>catalystWatch.runCatalystWatch({ tg, db, markAlerted, alreadyAlerted, saveState, onCatalyst:(ev)=>catalystTracking.recordEvent(ev) }).catch(e=>console.error('[CATALYST]',e.message)));
 // Studio mercato a colpo d'occhio (sparkline + frecce su/giù): ogni lunedì ore 9:30
 cron.schedule('30 9 * * 1',()=>{ const m=priceTracker.telegramReport(10); if(m) tg(m).catch(e=>console.error('[TRACKER-REPORT]',e.message)); });
+cron.schedule('0 10 * * 1',()=>{ const m=portfolio.telegramReport(); if(m) tg(m).catch(e=>console.error('[PF-REPORT]',e.message)); });
+// Effetto catalizzatori: misura ogni notte, report settimanale lunedì h10:15
+cron.schedule('0 3 * * *',()=>{ try{ catalystTracking.measureAll(); }catch(e){ console.error('[CAT-TRACK]',e.message); } });
+cron.schedule('15 10 * * 1',()=>{ const m=catalystTracking.telegramReport(10); if(m) tg(m).catch(e=>console.error('[CAT-TRACK-REPORT]',e.message)); });
 cron.schedule('0 */4 * * *',async()=>{
   for (const item of db.watchlist.filter(w=>w.active)){
     try{
@@ -2218,6 +2301,8 @@ app.listen(PORT,'0.0.0.0',async()=>{
   loadState();
   await loadStateGist(); // memoria durevole gratis: ripopola gli scartati persi da /tmp
   priceTracker.load(); // storico prezzi + portafoglio investitore
+  portfolio.load();    // memoria decisioni compro/passo/vendo + P&L
+  catalystTracking.load(); // storico indice brand + eventi catalizzatore
   const gold=await getGoldPrice().catch(()=>null);
   const platinum=await getPlatinumPrice().catch(()=>null);
   console.log(`\n⌚ Watch Price Bot v12.4 — porta ${PORT}`);
