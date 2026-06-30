@@ -1,0 +1,135 @@
+// brandWatchlist.js — Watchbot v11.14 | Aggiornato 30/06/26
+// Watchlist attiva: modelli da comprare se trovati sotto soglia
+//
+// NOVITÀ v11.14:
+//  (A) Candidati "DROP-HUNTER": microbrand/indie le cui EDIZIONI LIMITATE si
+//      apprezzano. Regola d'oro: il valore si cattura SOLO al lancio/preordine.
+//      Sul secondario già a premio = treno perso. maxBuy qui = tetto SECONDARIO
+//      "sottoprezzo" (gap-hunter): segnala se trovato SOTTO quel valore da
+//      venditore non-orologiaio (eredità/sgombero). Il drop al lancio si
+//      compra a prezzo di listino, lo gestisce DROP_SYSTEM (vedi sotto).
+//  (B) DROP_SYSTEM: scorecard a 6 segnali (>=9/12 = compra al lancio),
+//      brand-radar dei drop, alias "gemello famoso", alias Blancpain/Rayville.
+
+const watchlist = [
+
+  // -- PRIORITA MASSIMA -------------------------------------------------------
+  { brand: 'Universal Geneve', model: 'Polerouter', caliber: '215 218 1-66 1-69', maxBuy: 900, note: 'Microrotor solo-tempo, catalizzatore 2026' },
+  { brand: 'Universal Geneve', model: 'White Shadow', caliber: '1-66', maxBuy: 1000, note: 'Ultra-thin cult, acciaio preferred' },
+  { brand: 'Universal Geneve', model: 'Compax', caliber: 'manifattura', maxBuy: 2500, note: 'Panda = premium, verificare quadrante' },
+  { brand: 'Gallet', model: 'Excel-O-Graph', caliber: 'EP40 EP40-68', maxBuy: 1800, note: 'Manifattura colonne, max 1800 per margine' },
+  { brand: 'Vacheron Constantin', model: 'dress oro 18k', caliber: 'K1014', maxBuy: 3500, note: 'Calcolare melt floor prima — non superare mai' },
+
+  // -- PRIORITA ALTA ----------------------------------------------------------
+  { brand: 'Nivada', model: 'CASD Chronomaster', caliber: 'Valjoux 92', maxBuy: 1500, note: 'Config icona broad-arrow, verificare fondello' },
+  { brand: 'Nivada', model: 'CASD Chronomaster', caliber: 'Valjoux 23', maxBuy: 2500, note: 'Vertice gerarchia, raro' },
+  { brand: 'Movado', model: 'Datron Datochron HS360', caliber: '3019PHC', maxBuy: 1800, note: 'Vero El Primero accessibile' },
+  { brand: 'Piaget', model: 'dress oro vintage', caliber: '9P 12P', maxBuy: 1500, note: 'Ultra-sottile manifattura, oro 18k preferred' },
+  { brand: 'Gallet', model: 'Jim Clark', caliber: 'Valjoux 72', maxBuy: 2500, note: 'NON confondere con prezzi vecchi 800, mercato 3700-4950' },
+
+  // -- PRIORITA MEDIA ---------------------------------------------------------
+  { brand: 'Eberhard', model: 'Chrono 4 Grande Taille', ref: '31052', maxBuy: 2000, note: 'Vedi pezzo di Leonardo — confronto mercato' },
+  { brand: 'Cyma', model: 'Watersport Navystar', caliber: 'R459', maxBuy: 120, note: 'Solo tempo manifattura sottovalutato' },
+  { brand: 'Helvetia', model: 'cronografo', caliber: 'Valjoux 72', maxBuy: 800, note: 'Daytona accessibile' },
+  { brand: 'Invicta', model: 'vintage pre-quarzo', caliber: 'Valjoux 72', maxBuy: 600, note: 'Solo vintage vero, no moderni Invicta' },
+  { brand: 'Wittnauer', model: 'cronografo', caliber: 'Valjoux 72', maxBuy: 700, note: 'Parente povero Daytona' },
+  { brand: 'Poljot', model: 'Strela', caliber: 'Strela', maxBuy: 400, note: 'Crono russo manifattura' },
+  { brand: 'LeJour', model: 'vintage', caliber: 'qualsiasi manifattura', maxBuy: 500, note: 'Sottovalutato, watchlist bot' },
+  { brand: 'Clebar', model: 'vintage', caliber: 'qualsiasi manifattura', maxBuy: 400, note: 'Sottovalutato' },
+
+  // -- INDIE MODERNI (eccezione al filtro vintage) ----------------------------
+  { brand: 'Czapek', model: 'Quai des Bergues', caliber: 'SXH5', maxBuy: 9000, note: 'In-house, entrata indie' },
+  { brand: 'Atelier Wen', model: 'Perception', caliber: 'qualsiasi', maxBuy: 2500, note: 'Primo bracciale tantalio integrato, 700->30k traiettoria' },
+  { brand: 'Urban Jurgensen', model: 'ref 1140 P8 Jules', caliber: 'manifattura', maxBuy: 8000, note: 'Pre-rilancio Voutilainen 2025' },
+
+  // -- DROP-HUNTER: limited microbrand che si apprezzano ----------------------
+  //    maxBuy = tetto SECONDARIO "sottoprezzo" (gap-hunter): segnala solo se
+  //    trovato SOTTO quel valore. Il drop al lancio si compra a listino (DROP_SYSTEM).
+  { brand: 'Furlan Marri', model: 'Meteorite Octa', caliber: 'meca-quartz', maxBuy: 900, note: 'Quadrante meteorite Muonionalusta; flip storico; intercetta sottoprezzo' },
+  { brand: 'Furlan Marri', model: 'chronograph LE', caliber: 'meca-quartz / mecc.', maxBuy: 700, note: 'Hype 2021, rivendita gonfiata; solo LE sold-out sottoprezzo' },
+  { brand: 'Massena LAB', model: 'Uni-Racer / collab LE', caliber: 'Sellita', maxBuy: 1500, note: 'Gemello: UG Big-Eye. Solo LE/collab sold-out' },
+  { brand: 'Brew', model: 'Retrograph / Metric LE', caliber: 'meca-quartz', maxBuy: 450, note: 'Sold-out abituale, secondario forte; intercetta sottoprezzo' },
+  { brand: 'Baltic', model: 'edizione limitata', caliber: 'Sellita / Miyota', maxBuy: 600, note: 'Solo LE/collab sold-out, no serie aperte' },
+  { brand: 'Venezianico', model: 'Bucintoro Legacy of Time (1969/1976/Prima Serie)', caliber: 'Lemania 1873 NOS', maxBuy: 4200, note: 'Gemello: Omega Speedmaster (cal.861). Solo LE Lemania-NOS; serie Seiko NE88 = NO investimento' },
+
+];
+
+// ============================================================================
+// DROP_SYSTEM — riconoscere il PROSSIMO "Bucintoro" PRIMA che esploda.
+// Lezione: una limited microbrand si apprezza quando ha >=4-5 di 6 ingredienti.
+// Il valore si cattura SOLO al lancio/preordine. Dopo il sold-out a premio,
+// l'unico affare resta il gap-hunter (qualcuno che rivende sottoprezzo).
+// ============================================================================
+
+// Brand-radar: pagine "new/preorder" da monitorare + canali stampa che anticipano.
+const DROP_RADAR_BRANDS = [
+  { brand: 'Furlan Marri',  site: 'furlanmarri.com',   tier: 'caldo' },
+  { brand: 'Venezianico',   site: 'venezianico.com',   tier: 'caldo' },
+  { brand: 'Brew',          site: 'brew-watches.com',  tier: 'caldo' },
+  { brand: 'Massena LAB',   site: 'massenalab.com',    tier: 'alto' },
+  { brand: 'Baltic',        site: 'baltic-watches.com',tier: 'alto' },
+  { brand: 'Atelier Wen',   site: 'atelierwen.com',    tier: 'alto' },
+  { brand: 'Berneron',      site: 'berneron.ch',       tier: 'osservato' },
+];
+const DROP_PRESS_FEEDS = [
+  'fratellowatches.com', 'monochrome-watches.com', 'hodinkee.com',
+  'watchesbysjx.com', 'thewatchpages.com', 'timeandtidewatches.com',
+];
+
+// Alias "gemello famoso" (segnale 5): se la limited scende da un riferimento
+// costoso e NOTO, vale di piu. Keyword per riconoscerlo nei testi/annunci.
+const TWIN_ALIASES = {
+  'Lemania 1873': ['Omega Speedmaster', 'cal.861', 'Moonwatch'],
+  'Big-Eye':      ['Universal Geneve Big Eye', 'UG Compax'],
+  'Valjoux 72':   ['Rolex Daytona', 'Heuer Autavia'],
+  'Valjoux 92':   ['Nivada Chronomaster', 'Aquastar Deepstar'],
+  'meteorite':    ['Rolex meteorite', 'Omega meteorite'],
+};
+
+// Alias trappola-Blancpain (rimasti in sospeso): un Fifty Fathoms "nascosto"
+// sotto firma US Divers / Rayville. Chi lista cosi spesso non sa cos'ha.
+const BLANCPAIN_HIDDEN_ALIASES = {
+  brand: 'Blancpain', model: 'Fifty Fathoms (doppia firma)',
+  aliases: ['Rayville', 'Aqua-Lung', 'Aqua Lung', 'US Divers', 'Spirotechnique'],
+  // NON confondere con questi (deprezzano / altra cosa):
+  excludeNoise: ['Swatch', 'Bioceramic', 'Scuba Fifty Fathoms', 'Ocean of Storms',
+                 'cinturino', 'strap', 'tribute strap', 'Healthways', 'Aquastarlet'],
+  note: 'Verifica fisica obbligatoria (heavily faked). Mai a scatola chiusa.',
+};
+
+// Scorecard: 6 segnali, 0-2 ciascuno. >=9 = compra al lancio, 6-8 = osserva, <6 = passa.
+// signals = oggetto con i 6 punteggi gia valutati (0/1/2). Ritorna verdetto.
+function scoreDrop(signals = {}) {
+  const keys = ['hardwareStoria', 'scarsita', 'narrazioneArtefatto',
+                'domandaPreordine', 'scontoVsGemello', 'momentumBrand'];
+  let total = 0;
+  for (const k of keys) {
+    const v = Number(signals[k] || 0);
+    total += Math.max(0, Math.min(2, v));
+  }
+  let verdetto, azione;
+  if (total >= 9)      { verdetto = 'COMPRA AL LANCIO'; azione = 'Preordine/drop a listino. Finestra ORA.'; }
+  else if (total >= 6) { verdetto = 'OSSERVA';          azione = 'Segui il drop; compra solo se sale a 9 con sold-out.'; }
+  else                 { verdetto = 'PASSA';            azione = 'Non in tesi. Si deprezza.'; }
+  return { score: total, max: 12, verdetto, azione };
+}
+
+// Guida alla compilazione dei 6 segnali (riferimento per claudeAnalyst/operatore):
+const SCORECARD_GUIDE = {
+  hardwareStoria:      '0=ETA/Seiko base anonimo | 1=Sellita/Seiko top (NE88) | 2=movimento storico NOS (Lemania, Valjoux 92, Venus colonne)',
+  scarsita:            '0=serie aperta | 1=limited 300-500 | 2=numero chiuso <=150, inciso',
+  narrazioneArtefatto: '0=generica | 1=storia forte | 2=storia + oggetto fisico (pala Concorde, roccia Everest, meteorite)',
+  domandaPreordine:    '0=a magazzino | 1=vende in settimane | 2=sold-out in ore/preordine',
+  scontoVsGemello:     '0=nessun riferimento | 1=riferimento vago | 2=gemello costoso noto (Speedmaster, UG Big-Eye) a 3-6x',
+  momentumBrand:       '0=sconosciuto | 1=in crescita | 2=premi (GPHG)+community 10k+ +stampa (Fratello/Hodinkee)',
+};
+
+module.exports = {
+  watchlist,
+  DROP_RADAR_BRANDS,
+  DROP_PRESS_FEEDS,
+  TWIN_ALIASES,
+  BLANCPAIN_HIDDEN_ALIASES,
+  scoreDrop,
+  SCORECARD_GUIDE,
+};
