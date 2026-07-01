@@ -52,6 +52,16 @@ const watchlist = [
   { brand: 'Baltic', model: 'edizione limitata', caliber: 'Sellita / Miyota', maxBuy: 600, note: 'Solo LE/collab sold-out, no serie aperte' },
   { brand: 'Venezianico', model: 'Bucintoro Legacy of Time (1969/1976/Prima Serie)', caliber: 'Lemania 1873 NOS', maxBuy: 4200, note: 'Gemello: Omega Speedmaster (cal.861). Solo LE Lemania-NOS; serie Seiko NE88 = NO investimento' },
 
+  // -- CATALIZZATORE / SLEEPER (deposito marchio + segnale rilancio) ----------
+  //    Aggiunti 01/07/26 dopo segnale catalizzatore Roamer (deposito NewCo Holding AG).
+  //    Tesi: marchi svizzeri storici dormienti; se parte un rilancio gli ORIGINALI
+  //    d'epoca fanno da traino (pattern Universal Geneve). maxBuy = tetto sottoprezzo
+  //    per gli ORIGINALI VERI, non i comuni. Vedi note per quali modelli puntare.
+  { brand: 'Roamer', model: 'Stingray Chrono (Valjoux 726) / Rockshell diver', caliber: 'Valjoux 726 / MST 470-471', maxBuy: 700, note: 'CATALIZZATORE: solo Stingray crono Valjoux + Rockshell/Searock diver MST anni 60-70. Comuni dress MST = €90-360 (no). Verificare cassa non cappata (i cromati soffrono pitting)' },
+  { brand: 'Squale', model: '100 Atmos Master / 1000m vintage (crown 4h)', caliber: 'Felsa / ETA vintage', maxBuy: 800, note: 'CATALIZZATORE ma ATTENZIONE: solo VINTAGE veri pre-1995 (100 Atmos Master, 1000m, Marina Militare). I 1521 MODERNI Sellita/ETA = €500-900 no-investimento. Squale = terra di FRANKEN: verificare crown Von, seriale, bezel acrilico non mancante' },
+  { brand: 'Technos', model: 'Sky Diver 1000m / crono Valjoux vintage', caliber: 'Valjoux / ETA', maxBuy: 400, note: 'CATALIZZATORE debole: solo diver Sky Diver 1000m + crono Valjoux anni 70. Il resto = entry-level economico. Non pagare il nome' },
+  { brand: 'Sicura', model: 'diver / jump hour meccanico anni 70', caliber: 'EB / Baumgartner / Ronda', maxBuy: 150, note: 'CATALIZZATORE MOLTO debole: NO vero legame Breitling (mito eBay). Movimenti pin-lever EB economici, casse cromate ottone. Solo diver/jump-hour design anni 70 sottoprezzo per rivendita di stile, NON per qualita. Max €150' },
+
 ];
 
 // ============================================================================
