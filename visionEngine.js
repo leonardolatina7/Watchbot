@@ -32,7 +32,7 @@ const axios = require('axios');
 //    scenari) e vision (legge marca/quadrante/redial). A pagamento ma con
 //    tetto di spesa impostato da Leonardo su console.anthropic.com. ──
 const CLAUDE_KEY   = process.env.ANTHROPIC_API_KEY || null;
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5';
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const CLAUDE_URL   = 'https://api.anthropic.com/v1/messages';
 
 const GEMINI_KEY   = process.env.GEMINI_API_KEY || null;

@@ -36,6 +36,7 @@ const STATE_FILE = path.join(DATA_DIR, 'tm_radar.json');
 //    Un deposito in classe 14 da parte di un brand-orologio = intento vero,
 //    non un semplice "tengo il nome per sicurezza". È il segnale forte. ──
 const WATCH_NICE_CLASS = '14';
+let _mockWarned = false; // per loggare una sola volta che il radar marchi è in pausa (niente fonte)
 
 // ── I CANDIDATI RILANCIO ──────────────────────────────────────────────────
 // Marchi storici dormienti o appena risorti che valgono il monitoraggio.
@@ -92,8 +93,17 @@ async function fetchFilings(brand) {
   if (process.env.EUIPO_CLIENT_ID && process.env.EUIPO_CLIENT_SECRET) {
     return await fetchEuipoOfficial(brand); // vedi sotto
   }
-  // ── Nessuna chiave: modalità TEST con dati finti (così lo vedi girare) ──
-  return mockFilings(brand);
+  // ── Nessuna chiave: NIENTE dati finti. Un radar che inventa segnali è peggio
+  //    di un radar spento (ti fa inseguire falsi catalizzatori — es. il finto
+  //    "NewCo Holding AG" che usciva per OGNI marchio). Senza una fonte VERA
+  //    (Apify o EUIPO), non allarmo. Il mock resta disponibile SOLO forzandolo
+  //    a mano con TM_RADAR_MOCK=1, per test in locale. ──
+  if (process.env.TM_RADAR_MOCK === '1') return mockFilings(brand);
+  if (!_mockWarned) {
+    console.warn('[TM-RADAR] nessuna fonte marchi configurata (manca APIFY_TOKEN o EUIPO_CLIENT_ID) → radar marchi in PAUSA, nessun segnale finto. Aggiungi una chiave per attivarlo sui dati reali.');
+    _mockWarned = true;
+  }
+  return [];
 }
 
 function normalizeApify(data) {
@@ -111,8 +121,8 @@ function normalizeApify(data) {
 // EUIPO eSearch Plus ufficiale: OAuth2 client-credentials + ricerca RSQL.
 // Lasciato pronto da completare quando vorrai passare all'ufficiale.
 async function fetchEuipoOfficial(brand) {
-  console.warn('[TM-RADAR] adapter EUIPO ufficiale non ancora attivo, uso mock per', brand);
-  return mockFilings(brand);
+  console.warn('[TM-RADAR] adapter EUIPO ufficiale non ancora attivo per', brand, '→ nessun segnale (niente dati finti)');
+  return [];
 }
 
 // ── DATI FINTI per test/dry-run ──

@@ -63,7 +63,12 @@ function isConfigured() {
 }
 
 function getUsage() {
-  return { used: usage.count, limit: DAILY_LIMIT, cached: cache.size, model: MODEL };
+  // Etichetta modello REALE: il motore primario è Claude (via visionEngine).
+  // Prima mostrava il vecchio Groq llama-3.3, fuorviante in /api/status.
+  const modelLabel = process.env.ANTHROPIC_API_KEY
+    ? (process.env.CLAUDE_MODEL || 'claude-sonnet-5')
+    : (process.env.GEMINI_API_KEY ? (process.env.GEMINI_MODEL || 'gemini') : MODEL);
+  return { used: usage.count, limit: DAILY_LIMIT, cached: cache.size, model: modelLabel };
 }
 
 // NB: il throttle anti-429 e il fallback tra provider ora vivono in

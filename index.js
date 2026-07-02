@@ -36,6 +36,24 @@ require('dotenv').config();
 process.on('uncaughtException', (e) => { console.error('[CRASH uncaughtException]', e && e.stack || e); });
 process.on('unhandledRejection', (e) => { console.error('[CRASH unhandledRejection]', e && e.stack || e); });
 
+// ── BATTITO CARDIACO (diagnostica) ──────────────────────────
+// Ogni 5 minuti scrive nei log Render: "sono vivo, RAM usata X MB, acceso da Y".
+// A cosa serve: se il bot muore, guardando l'ULTIMA riga [HEARTBEAT] prima del
+// silenzio si capisce la causa SENZA indovinare:
+//  - se la RAM stava salendo verso il tetto (Starter ~512MB) → MEMORIA ESAURITA
+//    (il sistema lo uccide, i gestori [CRASH] qui sopra non scattano nemmeno);
+//  - se la RAM era bassa e i log si fermano di colpo → BLOCCO/loop o problema Render.
+// Costa pochissimo (una riga di log ogni 5 min) e non rallenta niente.
+const _bootTime = Date.now();
+function _heartbeat() {
+  const mu = process.memoryUsage();
+  const mb = (n) => Math.round(n / 1024 / 1024);
+  const upMin = Math.round((Date.now() - _bootTime) / 60000);
+  console.log(`[HEARTBEAT] vivo | RAM heap ${mb(mu.heapUsed)}/${mb(mu.heapTotal)}MB · rss ${mb(mu.rss)}MB | acceso da ${upMin} min`);
+}
+setInterval(_heartbeat, 5 * 60 * 1000);
+setTimeout(_heartbeat, 10 * 1000); // primo battito dopo 10s dall'avvio, per conferma immediata
+
 const { findWatchModel } = require('./metalsDatabase');
 const { SEED_BRANDS, scanAllBrands } = require('./discoveryEngine');
 const { scanHypeModels, analyzeModel, HYPE_WATCHLIST } = require('./socialEngine');
@@ -78,6 +96,8 @@ const catalystTracking = require('./catalystTracking'); // ── STORICO BRAND 
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
 const blindHunter = safeRequire('./blindHunter', { huntGems: async () => [], longinesLine: () => '' });
+// ── RASSEGNA STAMPA delle 8:00 (tutte le news dalle fonti autorevoli) ──
+const morningBrief = safeRequire('./morningBrief', { runMorningBrief: async () => ({ sent: 0 }) });
 
 const app = express();
 app.use(cors());
@@ -689,6 +709,25 @@ async function ebayHealth() {
   // chiavi presenti ma eBay le rifiuta → riporto l'errore VERO di eBay
   const det = typeof ebayLastError === 'string' ? ebayLastError : JSON.stringify(ebayLastError || {}).slice(0, 200);
   return { ok: false, reason: 'eBay rifiuta le chiavi', detail: det || 'errore sconosciuto (vedi log [eBay OAuth])' };
+}
+// ── Variante per l'AVVIO: le env di Render a volte non sono ancora iniettate
+//    nel primissimo istante in cui parte il processo, e ebayHealth() darebbe un
+//    falso "chiavi mancanti". Qui riprovo qualche volta SOLO in quel caso
+//    (tempismo). Se invece eBay RIFIUTA le chiavi (scadute), NON riprovo: è un
+//    problema vero e va detto subito. Così il messaggio di avvio è onesto senza
+//    falsi allarmi. ──
+async function ebayHealthWithRetry(tentativi = 4, pausaMs = 4000) {
+  let last = null;
+  for (let i = 0; i < tentativi; i++) {
+    last = await ebayHealth();
+    if (last.ok) return last;                          // funziona → esco subito
+    if (last.reason !== 'chiavi mancanti') return last; // rifiuto vero → niente retry
+    if (i < tentativi - 1) {
+      console.log(`[eBay] chiavi non ancora visibili (tentativo ${i+1}/${tentativi}), riprovo tra ${pausaMs/1000}s...`);
+      await new Promise(r => setTimeout(r, pausaMs));
+    }
+  }
+  return last;
 }
 async function searchEbayAPI(query) {
   const token = await getEbayToken();
@@ -2148,7 +2187,7 @@ async function runDiscoveryScan() {
 }
 
 // ══════════════ API ROUTES ══════════════
-app.get('/api/versione', (req, res) => res.json({ versione: '12.18', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','Marktplaats','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'] }));
+app.get('/api/versione', (req, res) => res.json({ versione: '12.21', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','Marktplaats','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'] }));
 
 app.get('/api/diagnostica', async (req, res) => {
   const q = (req.query.q || 'omega').toString();
@@ -2314,6 +2353,19 @@ app.get('/api/oro', async(req,res) => {
 });
 
 app.get('/api/gold-scan',(req,res) => { res.json({message:'Scansione avviata',queries:getGoldQueries().length}); runGoldScan().catch(e=>console.error('[SCAN]',e.message)); });
+// Prova manuale della rassegna stampa (force=ignora l'anti-doppione, così la vedi anche se già inviata oggi)
+app.get('/api/brief',(req,res) => { res.json({message:'Rassegna stampa avviata, guarda Telegram'}); morningBrief.runMorningBrief({ tg, db, saveState, force:true }).catch(e=>console.error('[BRIEF]',e.message)); });
+// Stato di salute: RAM e da quanto è acceso, al volo dal browser (per capire se la memoria sale)
+app.get('/api/salute',(req,res) => {
+  const mu = process.memoryUsage();
+  const mb = (n) => Math.round(n / 1024 / 1024);
+  res.json({
+    vivo: true,
+    accesoDaMinuti: Math.round((Date.now() - _bootTime) / 60000),
+    ram: { heapUsedMB: mb(mu.heapUsed), heapTotalMB: mb(mu.heapTotal), rssMB: mb(mu.rss) },
+    nota: 'Se rssMB si avvicina a ~512 (tetto Starter) il rischio è memoria esaurita.'
+  });
+});
 app.get('/api/arbitrage',(req,res) => { const all=[...db.arbitrage,...db.nearArbitrage].sort((a,b)=>b.diffPct-a.diffPct); res.json(all.slice(0,200)); });
 app.get('/api/arbitrage/real',(req,res) => res.json([...db.arbitrage].sort((a,b)=>b.diffPct-a.diffPct)));
 app.get('/api/arbitrage/near',(req,res) => res.json([...db.nearArbitrage].sort((a,b)=>b.diffPct-a.diffPct)));
@@ -2717,7 +2769,7 @@ app.get('/api/status',async(req,res) => {
   const platinum=await getPlatinumPrice().catch(()=>null);
   const eh = await ebayHealth().catch(()=>({ok:false,reason:'errore check',detail:null}));
   res.json({
-    status:'online',version:'12.18',
+    status:'online',version:'12.21',
     goldPricePerGram:gold?Math.round(gold*100)/100:null, platinumPricePerGram:platinum?Math.round(platinum*100)/100:null,
     arbitrageFound:db.arbitrage.length,nearArbitrageFound:db.nearArbitrage.length, vintageDealsFound:db.vintageDeals.length,
     observedCount:db.observed.filter(o=>o.active).length,
@@ -2770,6 +2822,8 @@ cron.schedule('0 9 * * 1',()=>awardsRadar.checkAll(tg).catch(e=>console.error('[
 // quando esce un catalizzatore (rilancio, nuovo modello, edizione limitata,
 // acquisizione, anniversario, record d'asta). Anti-ripetizione via db.alertedFps.
 cron.schedule('0 7,19 * * *',()=>catalystWatch.runCatalystWatch({ tg, db, markAlerted, alreadyAlerted, saveState, onCatalyst:(ev)=>catalystTracking.recordEvent(ev) }).catch(e=>console.error('[CATALYST]',e.message)));
+// RASSEGNA STAMPA: ogni mattina alle 8:00 ORA ITALIANA (Render gira in UTC → fisso il fuso).
+cron.schedule('0 8 * * *',()=>morningBrief.runMorningBrief({ tg, db, saveState }).catch(e=>console.error('[BRIEF]',e.message)), { timezone: 'Europe/Rome' });
 // Studio mercato a colpo d'occhio (sparkline + frecce su/giù): ogni lunedì ore 9:30
 cron.schedule('30 9 * * 1',()=>{ const m=priceTracker.telegramReport(10); if(m) tg(m).catch(e=>console.error('[TRACKER-REPORT]',e.message)); });
 cron.schedule('0 10 * * 1',()=>{ const m=portfolio.telegramReport(); if(m) tg(m).catch(e=>console.error('[PF-REPORT]',e.message)); });
@@ -2808,9 +2862,9 @@ app.listen(PORT,'0.0.0.0',async()=>{
   if(process.env.TELEGRAM_TOKEN&&process.env.TELEGRAM_CHAT_ID){
     const ts = priceTracker.stats();
     const aiOff = !claudeAnalyst.isConfigured();
-    const eh = await ebayHealth();
+    const eh = await ebayHealthWithRetry();
     await tg(
-      `✅ <b>Watch Price Bot v12.18 Online!</b>\n\n🥇 Oro: €${gold?.toFixed(2)||'N/A'}/g\n🔘 Platino: €${platinum?.toFixed(2)||'N/A'}/g\n\n`+
+      `✅ <b>Watch Price Bot v12.21 Online!</b>\n\n🥇 Oro: €${gold?.toFixed(2)||'N/A'}/g\n🔘 Platino: €${platinum?.toFixed(2)||'N/A'}/g\n\n`+
       `🏺 Database vintage: <b>${Object.keys(VINTAGE_DB).length} modelli</b>\n`+
       `📈 Marchi-azienda seguiti: <b>${(brandWatchlist.watchlist||[]).length}</b>\n`+
       `📊 Storico prezzi: <b>${ts.modelsTracked} modelli</b> · portafoglio: <b>${ts.portfolioCount}</b>\n`+
@@ -2820,10 +2874,11 @@ app.listen(PORT,'0.0.0.0',async()=>{
       (aiOff
         ? `🟠 <b>Analista AI SPENTO.</b> Manca la chiave AI su Render (ANTHROPIC_API_KEY, o GEMINI/GROQ come riserva). L'oro funziona lo stesso (è calcolo puro), ma niente verdetti vintage.\n`
         : `🤖 Analista AI: <b>ATTIVO</b> (Claude \u2192 Gemini \u2192 Groq)\n`)+
-      `\n<b>NOVITÀ v12.18:</b>\n`+
+      `\n<b>NOVITÀ v12.21:</b>\n`+
+      `\u2615 <b>Rassegna stampa ore 8:00</b>: ogni mattina TUTTE le news dalle testate autorevoli (Hodinkee, Fratello, Monochrome, WatchPro, Oracle Time, Time+Tide, aBlogtoWatch, WatchTime, Worn&Wound, SJX, Europa Star), raggruppate per fonte. Provala subito con <code>/api/brief</code>.\n`+
+      `\u{1F6D1} <b>Radar marchi finto SPENTO</b>: i segnali "deposito marchio" inventati (falso NewCo Holding AG su ogni marca) sono stati eliminati. Niente più falsi catalizzatori.\n`+
       `\u{1F9E0} Verdetti vintage: motore <b>Claude</b> (primario, qualità alta), con Gemini e Groq come riserva automatica se Claude non risponde.\n`+
       `\u{1F4F8} <b>Analisi foto attiva</b>: sui pezzi senza marca nel titolo, l'AI prova a leggere il logo dalla foto (flip cieco). L'occhio finale resta sempre il tuo.\n`+
-      `\u{1F50D} <b>Stato eBay VERO</b>: il bot ora testa davvero il token all'avvio \u2014 se le chiavi scadono, qui te lo dice col motivo, non un finto ATTIVO.\n`+
       `\u{1F947} Oro/platino: arbitraggio a CALCOLO PURO, gira su OGNI annuncio, gratis e non si ferma mai.\n`+
       `\nPrima scansione tra 90 secondi...`
     );
