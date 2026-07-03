@@ -2855,6 +2855,7 @@ app.listen(PORT,'0.0.0.0',async()=>{
   priceTracker.load(); // storico prezzi + portafoglio investitore
   portfolio.load();    // memoria decisioni compro/passo/vendo + P&L
   catalystTracking.load(); // storico indice brand + eventi catalizzatore
+  try { catalystTracking.seedKnownEvents(); } catch(e){ console.error('[CAT-TRACK] seed KO:', e.message); } // eventi noti (B&M/Damiani ecc.)
   const gold=await getGoldPrice().catch(()=>null);
   const platinum=await getPlatinumPrice().catch(()=>null);
   console.log(`\n⌚ Watch Price Bot v12.4 — porta ${PORT}`);

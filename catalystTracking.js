@@ -115,6 +115,38 @@ function recordEvent({ brand, type, title }) {
   return ev;
 }
 
+// ── 2-bis. Eventi catalizzatore NOTI (seeding manuale) ─────────────────────
+// Eventi di mercato rilevanti registrati a mano da Leonardo/Claude. Vengono
+// inseriti una sola volta (anti-doppione by titolo). Chiamare seedKnownEvents()
+// dopo load() all'avvio del bot. Ogni nuovo evento futuro si aggiunge qui.
+const KNOWN_EVENTS = [
+  {
+    brand: 'Baume & Mercier',
+    type: 'acquisizione',
+    title: 'Gruppo Damiani acquisisce 100% B&M da Richemont (1 lug 2026)',
+    grado: 'medio',
+    finestraMesi: '12-24',
+    azione: 'Monitorare vintage B&M oro 18k a prezzo melt nelle aste IT. Priorita crono oro (Cornes de Vache, Valjoux colonne, Lemania). NO Riviera acciaio (prima serie 1973 introvabile; scritta "Riviera" sul quadrante = post-1980, no). NO quartz/moderni.',
+  },
+];
+
+// Inserisce gli eventi noti non ancora presenti (match per titolo esatto).
+function seedKnownEvents() {
+  let added = 0;
+  for (const ke of KNOWN_EVENTS) {
+    const exists = data.events.find(e => e.title === String(ke.title).slice(0, 140));
+    if (exists) continue;
+    const ev = recordEvent({ brand: ke.brand, type: ke.type, title: ke.title });
+    // Annoto i metadati extra (grado/finestra/azione) sull'evento creato.
+    if (ev && !ev.meta) {
+      ev.meta = { grado: ke.grado || null, finestraMesi: ke.finestraMesi || null, azione: ke.azione || null };
+      added++;
+    }
+  }
+  if (added) { save(); console.log(`[CAT-TRACK] Seeding eventi noti: +${added}`); }
+  return added;
+}
+
 // ── 3. Misura l'effetto: per ogni evento, confronta l'indice di brand DOPO
 //    la news (a +30/+90/+180gg) con la baseline pre-news. ────────────────────
 function measureAll() {
@@ -184,5 +216,6 @@ function exportData() { return data; }
 
 module.exports = {
   load, save, recordPrice, recordEvent, measureAll, telegramReport, summary, exportData,
+  seedKnownEvents, KNOWN_EVENTS,
   brandKey, WINDOWS, MIN_OBS,
 };

@@ -52,9 +52,10 @@ const SOURCES = [
   { name: '🔷 Europa Star',     domain: 'europastar.com' },
   { name: '🟩 Time and Watches',domain: 'timeandwatches.com' },
   { name: '🟪 Quill & Pad',     domain: 'quillandpad.com' },
+  { name: '🇮🇹 Orafix',         domain: 'orafix.com' },
 ];
 
-const MAX_TOTAL   = 38;   // tetto news per messaggio (chiesto: 30-40)
+const MAX_TOTAL   = 42;   // tetto news per messaggio (14 fonti, +Orafix IT)
 const MAX_PER_SRC = 6;    // massimo per singola testata (equità tra fonti)
 const MAX_AGE_H   = 26;   // finestra: ultime ~24h (26 di margine per il fuso)
 const STATE_KEY   = 'morningBriefSeen'; // dove ricordo i link già inviati

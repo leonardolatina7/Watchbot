@@ -62,6 +62,22 @@ const watchlist = [
   { brand: 'Technos', model: 'Sky Diver 1000m / crono Valjoux vintage', caliber: 'Valjoux / ETA', maxBuy: 400, note: 'CATALIZZATORE debole: solo diver Sky Diver 1000m + crono Valjoux anni 70. Il resto = entry-level economico. Non pagare il nome' },
   { brand: 'Sicura', model: 'diver / jump hour meccanico anni 70', caliber: 'EB / Baumgartner / Ronda', maxBuy: 150, note: 'CATALIZZATORE MOLTO debole: NO vero legame Breitling (mito eBay). Movimenti pin-lever EB economici, casse cromate ottone. Solo diver/jump-hour design anni 70 sottoprezzo per rivendita di stile, NON per qualita. Max €150' },
 
+  // -- B&M CATALIZZATORE DAMIANI (agg. 03/07/26) ------------------------------
+  //    Evento: Gruppo Damiani acquisisce 100% Baume & Mercier da Richemont (1 lug 2026).
+  //    Grado MEDIO: compratore solido (Valenza, €400M+ fatturato, cresce controtendenza)
+  //    ma B&M mid-tier. Regola: comprare SOLO per l'ORO a melt; il catalizzatore e' upside
+  //    gratis, NON la ragione d'acquisto. Priorita ai crono oro con movimento nobile.
+  { brand: 'Baume & Mercier', model: 'Cornes de Vache (crono calendario completo / fasi luna)', caliber: 'colonne vintage', maxBuy: 3500, note: 'IL tesoro del marchio. Anse a corna anni 50, crono cal-completo+luna oro. Cugino povero del Cornes de Vache Vacheron. Verificare originalita quadrante+movimento' },
+  { brand: 'Baume & Mercier', model: 'cronografo oro 18k vintage (Valjoux colonne / Lemania)', caliber: 'Valjoux 92 / Lemania', maxBuy: 1800, note: 'Solo crono ORO 18k con movimento NOBILE (Valjoux colonne o Lemania). Landeron 48/camma = solo valore oro a melt. NO quartz, NO Riviera acciaio, NO placcato/gold-filled' },
+
+  // -- BREITLING CHRONOMAT ROULEAUX (agg. 03/07/26, richiesta Leonardo) --------
+  //    Vintage anni 80-90 (nato 1984 dopo Frecce Tricolori 83; bracciale rouleaux/bullet
+  //    discontinuato 2000). Leonardo: piace bicolore coi rider tabs ORO. Strategia
+  //    "tengo/giro": comprare BASSO cosi va bene sia da portare sia da flippare.
+  //    PUNTO DEBOLE: rouleaux che si stira (ricambi cari) -> verificare integro non stirato.
+  { brand: 'Breitling', model: 'Chronomat rouleaux ACCIAIO (81950 / A13047 / A13050)', caliber: 'Valjoux 7750-base', maxBuy: 1800, note: 'Acciaio pieno = piu liquido da girare. Rouleaux INTEGRO non stirato + 4 rider tabs presenti + quadrante originale (no redial). Quadrante nero/bianco = piu liquido, blu Frecce = premio' },
+  { brand: 'Breitling', model: 'Chronomat rouleaux BICOLORE SS/18K rider tabs ORO (B13047/B13048/81950)', caliber: 'Valjoux 7750-base', maxBuy: 2000, note: 'Look preferito Leonardo. SOLO oro VERO 18k punzonato (mai placcato/gold-plated = solo moda). Bicolore si gira piu lento: comprare BASSO (<2000) cosi non perdi. Cuscino melt minimo se oro punzonato. Rouleaux integro obbligatorio' },
+
 ];
 
 // ============================================================================
