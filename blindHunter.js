@@ -56,7 +56,7 @@ const VISION_PROMPT =
 async function visionIdentify(imageUrl) {
   if (!imageUrl) return null;
   // Il motore prova Gemini (multimodale, non deprecato) e ripiega su Groq.
-  const raw = await visionEngine.visionComplete(imageUrl, VISION_PROMPT, { maxTokens: 350, temperature: 0, jsonMode: true });
+  const raw = await visionEngine.visionComplete(imageUrl, VISION_PROMPT, { maxTokens: 350, temperature: 0, jsonMode: true, skipClaude: true }); // fascia bassa: Gemini vision gratis basta, Sonnet riservato ai tier top
   if (!raw) return null;
   return visionEngine.parseJsonLoose(raw);
 }

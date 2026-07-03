@@ -93,6 +93,7 @@ const soldComps = require('./soldComps');
 const catalystWatch = safeRequire('./catalystWatch', { runCatalystWatch: async () => [], CATALYST_BRANDS: [] });
 const portfolio = require('./portfolio'); // ── MEMORIA DECISIONI + P&L (compro/passo/vendo) ──
 const catalystTracking = require('./catalystTracking'); // ── STORICO BRAND + EFFETTO CATALIZZATORE ──
+const aiGate = require('./aiGate'); // ── GATE DI TESI PRE-AI (v12.22): scarta la fuffa, Sonnet solo sui caldi ──
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
 const blindHunter = safeRequire('./blindHunter', { huntGems: async () => [], longinesLine: () => '' });
@@ -1829,9 +1830,23 @@ async function runGoldScan(mode = 'all') {
           continue;
         }
 
-        // ── ANALISI AI (Gemini→Groq) = MOTORE PRINCIPALE ──
+        // ── GATE DI TESI (v12.22): il buttafuori. Scarta la fuffa dichiarata
+        //    (fashion, smartwatch, placcato, quartz anonimo, replica) SENZA
+        //    spendere AI, e decide il motore: tier 'top' = Claude Sonnet
+        //    (solo candidati caldi: watchlist/brand nobile/calibro nobile/oro),
+        //    tier 'normal' = Gemini/Groq gratis. ──
+        const _gate = aiGate.gate(item.title, priceEur, { isWatchlist: !!watchlistHit(item.title), isVintageDb: !!vintage });
+        if (!_gate.pass) {
+          trace(`SCARTATO dal gate di tesi: ${_gate.reason}`);
+          console.log(`[GATE-TESI] salto (${_gate.reason}): ${item.title?.slice(0,55)}`);
+          seenUrls.add(nu); // non rianalizzarlo ai prossimi giri
+          continue;
+        }
+        if (_gate.tier === 'top') console.log(`[GATE-TESI] 🔥 TOP (${_gate.reason}) → Sonnet: ${item.title?.slice(0,55)}`);
+
+        // ── ANALISI AI = MOTORE PRINCIPALE (tier top → Claude; resto → Gemini/Groq) ──
         if (claudeAnalyst.isConfigured()) {
-          const ai = await claudeAnalyst.analyzeListing(item.title, priceEur, item.image);
+          const ai = await claudeAnalyst.analyzeListing(item.title, priceEur, item.image, { tier: _gate.tier });
           trace(ai ? (ai.isInteresting ? `3.AI INTERESSANTE (${ai.brand||'?'})` : `SCARTATO: AI dice non-interessante (brand letto: ${ai.brand||'?'})`) : 'SCARTATO: AI nessuna risposta');
           if (ai && ai.isInteresting) {
             if (isBrandBlacklisted(ai.brand)) { seenUrls.add(nu); continue; }
@@ -1844,8 +1859,20 @@ async function runGoldScan(mode = 'all') {
             //    questi pezzi non hanno valueLow, quindi non rientrano negli altri
             //    canali. L'occhio finale è di Leonardo. ──
             if (ai.refCheck) {
-              // Referenza incerta: NON è un affare confermato. Mostro prezzo e
-              // stima ma con avviso forte: verifica ref/calibro prima di tutto.
+              // ── SOGLIA ANTI-RUMORE (v12.22, richiesta Leonardo 03/07/26) ──
+              //    Con referenza incerta la stima è INAFFIDABILE per definizione:
+              //    l'unico alert sensato è quando c'è margine anche nello scenario
+              //    PEGGIORE. Regola: prezzo ≤ 70% della stima BASSA. "Chiede €3.700,
+              //    stima €3.500-6.500" = margine zero nel caso prudente → SILENZIO.
+              //    Tarabile via env REFCHECK_MAX_RATIO (0.7 default; 0.6 = più severo).
+              const _refRatio = parseFloat(process.env.REFCHECK_MAX_RATIO || '0.7');
+              if (!ai.valueLow || priceEur > Number(ai.valueLow) * _refRatio) {
+                trace(`SILENZIO refCheck (no margine prudente: chiede €${priceEur} vs stima bassa €${ai.valueLow||'?'})`);
+                console.log(`[REF-CHECK] silenzio, no margine prudente: ${item.title?.slice(0,55)}`);
+                continue;
+              }
+              // Referenza incerta MA prezzo ben sotto la stima bassa: questo sì
+              // che merita gli occhi di Leonardo. Avviso forte comunque.
               try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
               await tg(
                 `\u{1F50E} <b>DA VERIFICARE \u2014 REFERENZA INCERTA</b>\n\n`+
@@ -2443,7 +2470,7 @@ app.get('/api/affari/roi',(req,res)=>{
 });
 app.get('/api/vintage/db',(req,res)=>res.json(Object.entries(VINTAGE_DB).map(([k,v])=>({key:k,...v}))));
 app.get('/api/vintage/check',(req,res)=>{ const {title,price}=req.query; if(!title) return res.status(400).json({error:'?title= richiesto'}); const result=evaluateVintageDeal(title,price?parseFloat(price):999999); res.json(result||{match:false,message:'Modello non riconosciuto'}); });
-app.get('/api/claude/check',async(req,res)=>{ const {title,price,image}=req.query; if(!title) return res.status(400).json({error:'?title= richiesto'}); if(!claudeAnalyst.isConfigured()) return res.json({configured:false,message:'GROQ_API_KEY non configurata'}); const result=await claudeAnalyst.analyzeListing(title, price?parseFloat(price):5000, image||''); res.json(result||{error:'Analisi fallita'}); });
+app.get('/api/claude/check',async(req,res)=>{ const {title,price,image}=req.query; if(!title) return res.status(400).json({error:'?title= richiesto'}); if(!claudeAnalyst.isConfigured()) return res.json({configured:false,message:'GROQ_API_KEY non configurata'}); const result=await claudeAnalyst.analyzeListing(title, price?parseFloat(price):5000, image||'', { tier: req.query.tier || 'top' }); res.json(result||{error:'Analisi fallita'}); });
 
 // ── PORTAFOGLIO INVESTITORE + TRACKER ──
 app.get('/api/mio/add', (req, res) => {

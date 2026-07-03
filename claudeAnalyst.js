@@ -105,8 +105,13 @@ async function fetchImageBase64(imageUrl) {
  * Ritorna: { isInteresting, brand, model, caliber, material, valueLow,
  *            valueHigh, reasoning, confidence, sawImage, studyPick } oppure null.
  */
-async function analyzeListing(title, priceEur, imageUrl) {
+async function analyzeListing(title, priceEur, imageUrl, opts = {}) {
   if (!isConfigured()) return null;
+  // ── TIER MOTORE (v12.22, gate di tesi): 'top' = candidato caldo → Claude
+  //    Sonnet (primario a pagamento). Tutto il resto → skipClaude: parte
+  //    direttamente da Gemini Flash (gratis) e ripiega su Groq. Così Sonnet
+  //    lavora SOLO sulle opportunità vere e il budget mensile regge.
+  const _skipClaude = opts.tier !== 'top';
   if (!title) return null;
 
   // ── PRE-FILTRO ANTI-FUMO (a costo zero, PRIMA di Claude) ──
@@ -238,9 +243,9 @@ Regole:
     usage.count++;
     let text;
     if (hasImage) {
-      text = await visionEngine.visionComplete(imageUrl, prompt, { maxTokens: 1200, temperature: 0.2, jsonMode: true });
+      text = await visionEngine.visionComplete(imageUrl, prompt, { maxTokens: 1200, temperature: 0.2, jsonMode: true, skipClaude: _skipClaude });
     } else {
-      text = await visionEngine.textComplete(prompt, { maxTokens: 1200, temperature: 0.2, jsonMode: true });
+      text = await visionEngine.textComplete(prompt, { maxTokens: 1200, temperature: 0.2, jsonMode: true, skipClaude: _skipClaude });
     }
     if (!text) { console.error('[CLAUDE] Nessuna risposta dal motore AI (Gemini+Groq falliti)'); return null; }
 

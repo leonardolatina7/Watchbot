@@ -56,6 +56,23 @@ async function _throttle() {
 
 // ── Contatori d'uso (visibili via getStats, utile per /api/status) ──
 const stats = { claudeOk: 0, claudeFail: 0, geminiOk: 0, geminiFail: 0, groqOk: 0, groqFail: 0, groq429: 0 };
+
+// ── TETTO GIORNALIERO CLAUDE (v12.22, garanzia budget) ─────────────────────
+//    Il gate di tesi riduce le chiamate, ma il BUDGET deve reggere da solo:
+//    massimo CLAUDE_DAILY_CAP chiamate Sonnet al giorno (default 20 ≈ pochi
+//    centesimi/giorno ≈ ben sotto i 20€/mese). Superato il tetto, TUTTO passa
+//    su Gemini/Groq gratis fino a mezzanotte. Configurabile via env su Render.
+const CLAUDE_DAILY_CAP = parseInt(process.env.CLAUDE_DAILY_CAP || '20', 10);
+let _claudeToday = 0;
+let _claudeDay = new Date().toDateString();
+function claudeBudgetOk() {
+  const today = new Date().toDateString();
+  if (today !== _claudeDay) { _claudeDay = today; _claudeToday = 0; } // reset a mezzanotte
+  if (_claudeToday >= CLAUDE_DAILY_CAP) return false;
+  return true;
+}
+function claudeBudgetSpend() { _claudeToday++; if (_claudeToday === CLAUDE_DAILY_CAP) console.warn(`[visionEngine] ⛔ Tetto Claude raggiunto (${CLAUDE_DAILY_CAP}/giorno): da ora solo Gemini/Groq fino a mezzanotte`); }
+
 function getStats() {
   return {
     ...stats,
@@ -66,6 +83,8 @@ function getStats() {
     geminiModel: GEMINI_MODEL,
     groqTextModel: GROQ_MODEL,
     groqVisionModel: GROQ_VISION,
+    claudeDailyCap: CLAUDE_DAILY_CAP,
+    claudeUsedToday: _claudeToday,
   };
 }
 function isConfigured() { return !!CLAUDE_KEY || !!GEMINI_KEY || !!GROQ_KEY; }
@@ -189,11 +208,11 @@ async function groqCallWithRetry(messages, model, opts) {
 async function textComplete(prompt, opts = {}) {
   const o = { maxTokens: 1200, temperature: 0.2, jsonMode: true, ...opts };
 
-  if (CLAUDE_KEY) {
+  if (CLAUDE_KEY && !o.skipClaude && claudeBudgetOk()) { // gate di tesi + tetto giornaliero: oltre il cap, gratis fino a mezzanotte
     try {
       await _throttle();
       const out = await claudeCall([{ type: 'text', text: prompt }], { maxTokens: o.maxTokens });
-      stats.claudeOk++;
+      stats.claudeOk++; claudeBudgetSpend();
       return out;
     } catch (e) {
       stats.claudeFail++;
@@ -237,7 +256,7 @@ async function visionComplete(imageUrl, prompt, opts = {}) {
   const img = await fetchImageBase64(imageUrl);
   if (!img) return null; // foto non scaricabile: niente vision
 
-  if (CLAUDE_KEY) {
+  if (CLAUDE_KEY && !o.skipClaude && claudeBudgetOk()) { // gate di tesi + tetto giornaliero: oltre il cap, gratis fino a mezzanotte
     try {
       await _throttle();
       const blocks = [
@@ -245,7 +264,7 @@ async function visionComplete(imageUrl, prompt, opts = {}) {
         { type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.base64 } },
       ];
       const out = await claudeCall(blocks, { maxTokens: o.maxTokens });
-      stats.claudeOk++;
+      stats.claudeOk++; claudeBudgetSpend();
       return out;
     } catch (e) {
       stats.claudeFail++;

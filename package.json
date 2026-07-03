@@ -2,9 +2,11 @@
   "name": "watchbot",
   "version": "12.4.0",
   "main": "index.js",
-  "scripts": { "start": "node --max-old-space-size=460 --expose-gc index.js" },
+  "scripts": {
+    "start": "node --max-old-space-size=460 --expose-gc index.js"
+  },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.18.1",
     "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
