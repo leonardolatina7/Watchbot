@@ -150,6 +150,45 @@ const SCORECARD_GUIDE = {
   momentumBrand:       '0=sconosciuto | 1=in crescita | 2=premi (GPHG)+community 10k+ +stampa (Fratello/Hodinkee)',
 };
 
+// ============================================================================
+// FILTRI BRAND — riconoscono le due ECCEZIONI al filtro "solo vero vintage":
+//  (1) INDIPENDENTI MODERNI = le "azioni growth" dell'orologeria: ci interessano
+//      anche da nuovi. (2) FASCIA MEDIA = passano il filtro ma SOLO come affare
+//      vero a sconto concreto, mai "da studiare".
+// Usate da claudeAnalyst.js. Match case-insensitive e tollerante agli accenti.
+// ============================================================================
+function _norm(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+// Indipendenti moderni: manifatture indie contemporanee che si apprezzano da nuove.
+const MODERN_INDIE_BRANDS = [
+  'czapek', 'urban jurgensen', 'journe', 'f.p. journe', 'fp journe', 'akrivia',
+  'rexhep rexhepi', 'berneron', 'atelier wen', 'moser', 'h. moser', 'h moser',
+  'laurent ferrier', 'kari voutilainen', 'voutilainen', 'ming', 'petermann bedat',
+  'sylvain pinaud', 'raul pages', 'simon brette', 'furlan marri', 'baltic',
+  'massena lab', 'venezianico', 'brew',
+];
+
+// Fascia media: marchi di qualità che passano il filtro solo se sono un affare a sconto.
+const MIDRANGE_BRANDS = [
+  'tudor', 'grand seiko', 'jaeger-lecoultre', 'jaeger lecoultre', 'jlc', 'cartier',
+  'omega', 'longines', 'iwc', 'zenith', 'oris', 'nomos', 'baume & mercier',
+  'baume et mercier', 'baume mercier', 'breitling', 'tag heuer', 'rado',
+];
+
+function isModernIndie(brand) {
+  const b = _norm(brand);
+  if (!b) return false;
+  return MODERN_INDIE_BRANDS.some(x => b.includes(_norm(x)));
+}
+
+function isMidrange(brand) {
+  const b = _norm(brand);
+  if (!b) return false;
+  return MIDRANGE_BRANDS.some(x => b.includes(_norm(x)));
+}
+
 module.exports = {
   watchlist,
   DROP_RADAR_BRANDS,
@@ -158,4 +197,8 @@ module.exports = {
   BLANCPAIN_HIDDEN_ALIASES,
   scoreDrop,
   SCORECARD_GUIDE,
+  isModernIndie,
+  isMidrange,
+  MODERN_INDIE_BRANDS,
+  MIDRANGE_BRANDS,
 };

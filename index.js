@@ -2103,7 +2103,7 @@ async function runGoldScan(mode = 'all') {
       }
       all = null;
       if (global.gc) { try { global.gc(); } catch {} }
-    } catch(e) { console.error(`[SCAN] ${query}:`,e.message); }
+    } catch(e) { console.error(`[SCAN] ${rawQuery}:`,e.message); }
   }
 
   if (db.arbitrage.length>500) db.arbitrage=db.arbitrage.slice(-500);
