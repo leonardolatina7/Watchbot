@@ -98,6 +98,14 @@ const NOBLE_BRANDS = [
   'cornes de vache', 'chopard', 'czapek', 'urban jurgensen', 'journe', 'akrivia',
   'berneron', 'atelier wen', 'moser', 'voutilainen', 'furlan marri', 'massena lab',
   'venezianico', 'aquastar', 'doxa', 'glycine', 'cyma', 'helvetia', 'wakmann',
+  // indie growth aggiunti 04/07/26 ("azioni" dell'orologeria, tier top):
+  'pascal coyon', 'coyon', 'atelier de chronometrie', 'bernhard zwinz', 'winnerl',
+  'andersen geneve', 'andersen genève', 'flaux', 'brivet-naudot', 'theo auffret',
+  'auffret', 'garrick', 'anordain', 'rexhep rexhepi', 'laurent ferrier',
+  'simon brette', 'raul pages', 'sylvain pinaud',
+  // ondata-2 scouting indie 04/07/26 (formula-Coyon, fase early):
+  'habring', 'kudoke', 'ophion', 'phimphrachanh', 'j.n. shapiro', 'jn shapiro', 'shapiro',
+  'petermann bedat', 'petermann bédat', 'sarpaneva', 'delaloye', 'ochs und junior',
 ];
 
 // Calibri/segnali tecnici nobili: se il venditore li nomina, il pezzo merita occhi buoni.

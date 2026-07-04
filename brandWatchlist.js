@@ -168,6 +168,12 @@ const MODERN_INDIE_BRANDS = [
   'laurent ferrier', 'kari voutilainen', 'voutilainen', 'ming', 'petermann bedat',
   'sylvain pinaud', 'raul pages', 'simon brette', 'furlan marri', 'baltic',
   'massena lab', 'venezianico', 'brew',
+  // aggiunti 04/07/26:
+  'pascal coyon', 'coyon', 'atelier de chronometrie', 'bernhard zwinz', 'winnerl',
+  'andersen geneve', 'andersen genève', 'theo auffret', 'auffret',
+  'cyril brivet-naudot', 'brivet-naudot', 'garrick', 'anordain',
+  // ondata-2 scouting 04/07/26:
+  'habring', 'kudoke', 'ophion', 'phimphrachanh', 'shapiro', 'sarpaneva', 'delaloye',
 ];
 
 // Fascia media: marchi di qualità che passano il filtro solo se sono un affare a sconto.
@@ -189,6 +195,25 @@ function isMidrange(brand) {
   return MIDRANGE_BRANDS.some(x => b.includes(_norm(x)));
 }
 
+// ============================================================================
+// SCORECARD DEBUTTO INDIE (Leonardo, 04/07/26) — due diligence al giorno zero.
+// Derivata incrociando le tesi degli indie esplosi (Coyon, Brette, Rexhepi,
+// Pages, Voutilainen, Journe souscription). Si applica al PRIMO OROLOGIO
+// annunciato; ai RUMOR si monitora soltanto; si ORDINA solo con score >=6/8
+// E accesso retail ancora aperto (email risponde, lista <18 mesi, prezzo listino).
+// ============================================================================
+const INDIE_DEBUT_SCORECARD = [
+  '1. BACKGROUND: ex-complicazioni casa grande (MB&F/Patek/BNB/Journe) o restauratore o scuola top (Morteau/WOSTEP). Marketing-guy = debole.',
+  '2. CALIBRO: in-house vero O ebauche trasformata irriconoscibile con architettura pocket-watch classica (pattern Coyon/Unitas). ETA vestita = microbrand, NO.',
+  '3. FIRMA UNICA: riconoscibile a 3 metri (dragon scales Brette, detente Pages, seconde morte Habring, vipera Besancon Coyon). Senza firma niente storia.',
+  '4. FINITURA in macro: anglage a mano, angoli INTERNI (impossibili a macchina), black polish, guilloche a tornio. Le macro del movimento non mentono.',
+  '5. PRODUZIONE: <20 pezzi/anno = scarsita strutturale. 500 pezzi = altra tesi.',
+  '6. PREZZO vs FINITURA: sotto-prezzato (Coyon 4.125 per finitura da 15k) = da li nasce il multiplo.',
+  '7. VALIDAZIONE TERZA: Besancon (~100/anno), AHCI, shortlist LV Prize / GPHG Revelation.',
+  '8. VENDITA: subscription o diretta = retail ancora accessibile (lezione Journe souscription 1999).',
+  'TIMING: RUMOR=monitora / PRIMO OROLOGIO=scorecard / ORDINE=score 6+/8 e accesso aperto. Finestra tipica 1-3 anni prima di premio/asta/celebrity.',
+];
+
 module.exports = {
   watchlist,
   DROP_RADAR_BRANDS,
@@ -201,4 +226,5 @@ module.exports = {
   isMidrange,
   MODERN_INDIE_BRANDS,
   MIDRANGE_BRANDS,
+  INDIE_DEBUT_SCORECARD,
 };

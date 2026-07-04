@@ -94,6 +94,7 @@ const catalystWatch = safeRequire('./catalystWatch', { runCatalystWatch: async (
 const portfolio = require('./portfolio'); // ── MEMORIA DECISIONI + P&L (compro/passo/vendo) ──
 const catalystTracking = require('./catalystTracking'); // ── STORICO BRAND + EFFETTO CATALIZZATORE ──
 const aiGate = require('./aiGate'); // ── GATE DI TESI PRE-AI (v12.22): scarta la fuffa, Sonnet solo sui caldi ──
+const ahciRadar = require('./ahciRadar'); // ── RADAR AHCI (v12.23): nuovi candidati indie allo stadio rumor ──
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
 const blindHunter = safeRequire('./blindHunter', { huntGems: async () => [], longinesLine: () => '' });
@@ -133,6 +134,7 @@ let db = {
   liked: [],
   observed: [],   // ── pezzi "osservati ma non comprati" (soglia manuale)
   alertedFps: {}, // ── impronte degli annunci già segnalati (anti-ripetizione)
+  ahciKnown: [], // ── slug candidati AHCI già visti (radar indie, v12.23)
 };
 let _id = Date.now();
 const nid = () => ++_id;
@@ -225,6 +227,7 @@ function buildStatePayload() {
     liked: db.liked.slice(-500),
     observed: db.observed.slice(-300),
     alertedFps: db.alertedFps,
+    ahciKnown: db.ahciKnown || [],
   };
 }
 function saveState() {
@@ -267,6 +270,7 @@ function loadState() {
       db.liked = s.liked || [];
       db.observed = s.observed || [];
       db.alertedFps = s.alertedFps || {};
+      db.ahciKnown = Array.from(new Set([...(db.ahciKnown||[]), ...(s.ahciKnown||[])]));
       console.log(`[STATE] Caricati da ${STATE_FILE}: ${db.blacklistBrands.length} marchi bloccati, ${db.dismissedUrls.length} annunci scartati, ${db.liked.length} piaciuti, ${db.observed.length} osservati, ${Object.keys(db.alertedFps).length} impronte`);
     }
   } catch (e) { console.error('[STATE] load:', e.message); }
@@ -2470,6 +2474,11 @@ app.get('/api/affari/roi',(req,res)=>{
 });
 app.get('/api/vintage/db',(req,res)=>res.json(Object.entries(VINTAGE_DB).map(([k,v])=>({key:k,...v}))));
 app.get('/api/vintage/check',(req,res)=>{ const {title,price}=req.query; if(!title) return res.status(400).json({error:'?title= richiesto'}); const result=evaluateVintageDeal(title,price?parseFloat(price):999999); res.json(result||{match:false,message:'Modello non riconosciuto'}); });
+app.get('/api/ahci', async (req,res)=>{ // check manuale radar AHCI (v12.23)
+  const r = await ahciRadar.check(db.ahciKnown);
+  if (r.ok && r.newOnes.length && req.query.alert==='1') { await tg(ahciRadar.formatAlert(r.newOnes)); db.ahciKnown=r.known; saveState(); }
+  res.json(r.ok ? { ok:true, candidati:r.candidates.map(c=>c.name), nuovi:r.newOnes.map(c=>c.name), notiSalvati:(db.ahciKnown||[]).length } : { ok:false, errore:r.error });
+});
 app.get('/api/claude/check',async(req,res)=>{ const {title,price,image}=req.query; if(!title) return res.status(400).json({error:'?title= richiesto'}); if(!claudeAnalyst.isConfigured()) return res.json({configured:false,message:'GROQ_API_KEY non configurata'}); const result=await claudeAnalyst.analyzeListing(title, price?parseFloat(price):5000, image||'', { tier: req.query.tier || 'top' }); res.json(result||{error:'Analisi fallita'}); });
 
 // ── PORTAFOGLIO INVESTITORE + TRACKER ──
@@ -2912,4 +2921,22 @@ app.listen(PORT,'0.0.0.0',async()=>{
     );
   }
   setTimeout(()=>runGoldScan().catch(e=>console.error('[GOLD]',e.message)), 90000);
+  // ── RADAR AHCI (v12.23): nuovi candidati indipendenti = stadio rumor.
+  //    Check 3 min dopo l'avvio, poi 1 volta al giorno. Lezione Phimphrachanh:
+  //    quando esce l'orologio è tardi; qui si intercetta il prossimo Coyon. ──
+  const runAhciCheck = async () => {
+    try {
+      const r = await ahciRadar.check(db.ahciKnown);
+      if (!r.ok) { console.log('[AHCI] check saltato:', r.error); return; }
+      console.log(`[AHCI] candidati sul sito: ${r.candidates.length} | nuovi: ${r.newOnes.length}`);
+      if (r.newOnes.length) {
+        await tg(ahciRadar.formatAlert(r.newOnes));
+        db.ahciKnown = r.known; saveState();
+      } else if ((db.ahciKnown||[]).length < r.known.length) {
+        db.ahciKnown = r.known; saveState(); // primo giro: memorizzo senza alert
+      }
+    } catch (e) { console.error('[AHCI]', e.message); }
+  };
+  setTimeout(runAhciCheck, 180000);
+  setInterval(runAhciCheck, 24*3600000);
 });
