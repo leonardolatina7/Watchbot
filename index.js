@@ -2269,6 +2269,8 @@ async function runGoldScan(mode = 'all') {
   try {
     const st = require('./visionEngine').getStats() || {};
     statoTxt = `\n🔬 Oggi: <b>${FUNNEL.analizzatiAI}</b> analizzati AI · <b>${FUNNEL.aiInteressante}</b> promossi · <b>${FUNNEL.aiNonInteressante}</b> bocciati · <b>${FUNNEL.aiSenzaRisposta}</b> senza risposta\n⚙️ Motori: gemini ${st.geminiOk||0}✓/${st.geminiFail||0}✗ · groq ${st.groqOk||0}✓/${st.groqFail||0}✗ · haiku ${st.haikuOk||0}✓/${st.haikuFail||0}✗ · sonnet ${st.claudeOk||0}✓/${st.claudeFail||0}✗\n`;
+    const _errs = ['claude','haiku','groq','gemini'].map(k => st['lastErr_'+k] ? `${k}: ${st['lastErr_'+k]}` : null).filter(Boolean).slice(0, 2);
+    if (_errs.length) statoTxt += `⚠️ Ultimo errore — ${_errs.join(' · ')}\n`;
   } catch {}
   let bestTxt = '';
   try {
@@ -2396,7 +2398,7 @@ app.get('/api/diagnostica', async (req, res) => {
   } catch (e) { out._metalli = { errore: e.message }; }
   out._query = q;
   // ── AUTODIAGNOSI v12.10: dice subito se le ultime novità sono ONLINE ──
-  out._versione = '12.26';
+  out._versione = '12.28';
   out._src_health = SRC_HEALTH;
   out._funnel = FUNNEL;
   out._nuovi_mercati = {
@@ -2522,6 +2524,24 @@ app.get('/api/oro', async(req,res) => {
 </div><script>var FINE=${goldFine};function calc(){var peso=parseFloat(document.getElementById('peso').value.replace(',','.'));var kt=parseFloat(document.getElementById('kt').value);var lordo=document.getElementById('lordo').checked;if(!peso||peso<=0){alert('Inserisci il peso');return;}var pesoOro=lordo?peso*0.70:peso;var melt=pesoOro*kt*FINE;var out=document.getElementById('out');out.style.display='block';if(kt===0){document.getElementById('melt').textContent='0 € (placcato)';document.getElementById('maxoff').textContent='Solo come orologio';document.getElementById('note').textContent='Placcato: niente valore oro.';return;}var maxoff=melt*0.80;document.getElementById('melt').textContent=Math.round(melt).toLocaleString('it-IT')+' €';document.getElementById('maxoff').textContent='~'+Math.round(maxoff).toLocaleString('it-IT')+' €';var d='Oro netto: '+(Math.round(pesoOro*10)/10)+' g a '+(kt*1000)+'/1000.';if(lordo)d+=' (lordo -30%, stima generosa: chiedi il peso della SOLA cassa)';document.getElementById('note').textContent=d;}</script></body></html>`);
 });
 
+// ── TEST MOTORI ON-DEMAND (v12.28): apri /api/test-motori dopo ogni deploy o
+//    dubbio → verdetto immediato per ogni motore AI con l'errore ESATTO, più
+//    lo stato delle chiavi. Fine dei tentativi al buio. ──
+app.get('/api/test-motori', async (req, res) => {
+  try {
+    const r = await require('./visionEngine').selfTest();
+    res.json({
+      _versione: '12.28',
+      motori: r,
+      chiavi: {
+        anthropic: !!process.env.ANTHROPIC_API_KEY,
+        gemini: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
+        groq: !!(process.env.GROQ_API_KEY || process.env.GROQ_KEY),
+        claude_model_env: process.env.CLAUDE_MODEL || null,
+      },
+    });
+  } catch (e) { res.status(500).json({ errore: e.message }); }
+});
 app.get('/api/gold-scan',(req,res) => { res.json({message:'Scansione avviata',queries:getGoldQueries().length}); runGoldScan().catch(e=>console.error('[SCAN]',e.message)); });
 // Prova manuale della rassegna stampa (force=ignora l'anti-doppione, così la vedi anche se già inviata oggi)
 app.get('/api/brief',(req,res) => { res.json({message:'Rassegna stampa avviata, guarda Telegram'}); morningBrief.runMorningBrief({ tg, db, saveState, force:true }).catch(e=>console.error('[BRIEF]',e.message)); });
@@ -2964,6 +2984,30 @@ app.get('/api/status',async(req,res) => {
 // ── CRON ──
 // BASE: scansione completa ogni 2 ore (cron in UTC su Render). Alzata da 4h→2h:
 // con Groq gratis non c'è costo per analisi, quindi conviene battere più spesso.
+// ── AUTOTEST ALL'AVVIO (v12.28): a ogni deploy/riavvio il bot testa i motori
+//    AI e manda l'esito su Telegram, con l'errore esatto quando fallisce.
+//    Ogni avvio si auto-certifica: niente più diagnosi a screenshot.
+//    Disattivabile con STARTUP_ENGINE_TEST=false. ──
+if (process.env.STARTUP_ENGINE_TEST !== 'false') {
+  setTimeout(async () => {
+    try {
+      const r = await require('./visionEngine').selfTest();
+      const righe = r.map(x =>
+        `${x.ok ? '✅' : '❌'} <b>${x.engine}</b>${x.model ? ` (${x.model})` : ''}` +
+        (x.ok ? ` — ok in ${x.ms}ms` : ` — ${String(x.errore || '').replace(/[<>&]/g, '')}`)
+      ).join('\n');
+      const tutti = r.every(x => x.ok || /chiave assente/.test(String(x.errore || '')));
+      const disponibili = r.some(x => x.ok);
+      await tg(
+        `🔧 <b>Autotest motori all'avvio</b> (v12.28)\n\n${righe}\n\n` +
+        (disponibili
+          ? (tutti ? '✅ Tutto il configurato funziona: il bot analizza.' : '⚠️ Qualcosa fallisce: leggi l\'errore qui sopra, dice già la causa.')
+          : '🛑 NESSUN motore funziona: il bot raccoglie ma non analizza. L\'errore sopra dice perché.')
+      );
+    } catch (e) { console.error('[AUTOTEST]', e.message); }
+  }, 25000);
+}
+
 cron.schedule('0 * * * *',()=>runGoldScan('all').catch(e=>console.error('[SCAN]',e.message)));
 
 // ── BOOST NOTTURNO (ora italiana) ──
