@@ -24,6 +24,9 @@ const watchlist = [
   { brand: 'Nivada', model: 'CASD Chronomaster', caliber: 'Valjoux 92', maxBuy: 1500, note: 'Config icona broad-arrow, verificare fondello' },
   { brand: 'Nivada', model: 'CASD Chronomaster', caliber: 'Valjoux 23', maxBuy: 2500, note: 'Vertice gerarchia, raro' },
   { brand: 'Movado', model: 'Datron Datochron HS360', caliber: '3019PHC', maxBuy: 1800, note: 'Vero El Primero accessibile' },
+  { brand: 'Kelek', model: 'diver chronograph 20ATM / doppio nome Kelek-Breitling', caliber: 'Valjoux 7733 7734', maxBuy: 1400, note: 'Diver 20ATM tropical vale 2000-2500+; doppio nome Breitling +30-40%. Il 7733 comune vale 550-600: quello NON pagarlo oltre 400' },
+  { brand: 'Eterna', model: 'Eterna-Matic hidden crown', caliber: '1422 1412', maxBuy: 450, note: 'Corona nascosta = variante più desiderabile; rotore 5 sfere; dealer 500-700' },
+  { brand: 'Super Compressor', model: 'EPSA diver brand minori', caliber: 'qualsiasi', maxBuy: 550, note: 'Vero EPSA = fondello palombaro inciso o BREVET+crocetta; brand oscuri 450-650, icone (JLC Polaris) 5000+' },
   { brand: 'Piaget', model: 'dress oro vintage', caliber: '9P 12P', maxBuy: 1500, note: 'Ultra-sottile manifattura, oro 18k preferred' },
   { brand: 'Gallet', model: 'Jim Clark', caliber: 'Valjoux 72', maxBuy: 2500, note: 'NON confondere con prezzi vecchi 800, mercato 3700-4950' },
 
@@ -41,6 +44,7 @@ const watchlist = [
   { brand: 'Czapek', model: 'Quai des Bergues', caliber: 'SXH5', maxBuy: 9000, note: 'In-house, entrata indie' },
   { brand: 'Atelier Wen', model: 'Perception', caliber: 'qualsiasi', maxBuy: 2500, note: 'Primo bracciale tantalio integrato, 700->30k traiettoria' },
   { brand: 'Urban Jurgensen', model: 'ref 1140 P8 Jules', caliber: 'manifattura', maxBuy: 8000, note: 'Pre-rilancio Voutilainen 2025' },
+  { brand: 'Bradley Taylor', model: 'Ardea', caliber: 'manifattura artigianale', maxBuy: 30000, note: 'Early-indie profilo 10x (Le Locle + Patek L2); retail 62k acciaio: segnala solo sottoprezzo forte da non-collezionista' },
 
   // -- DROP-HUNTER: limited microbrand che si apprezzano ----------------------
   //    maxBuy = tetto SECONDARIO "sottoprezzo" (gap-hunter): segnala solo se

@@ -106,6 +106,8 @@ const NOBLE_BRANDS = [
   // ondata-2 scouting indie 04/07/26 (formula-Coyon, fase early):
   'habring', 'kudoke', 'ophion', 'phimphrachanh', 'j.n. shapiro', 'jn shapiro', 'shapiro',
   'petermann bedat', 'petermann bédat', 'sarpaneva', 'delaloye', 'ochs und junior',
+  // v12.31: acciaio-collezione + indie mancanti dalle sessioni
+  'kelek', 'bradley taylor',
 ];
 
 // Calibri/segnali tecnici nobili: se il venditore li nomina, il pezzo merita occhi buoni.
@@ -115,6 +117,9 @@ const NOBLE_CALIBERS = [
   'ruota a colonne', 'column wheel', 'roue a colonnes', 'schaltrad',
   'el primero', '30ch', '13zn', '13.33', 'cal 321', 'calibre 321', 'cal. 321',
   'cal 285', 'cal 281', 'peseux 260', 'zenith 135',
+  // v12.31 (07/07/26): segnali acciaio-collezione dalle sessioni di Leonardo
+  'super compressor', 'supercompressor', 'broad arrow', 'hidden crown',
+  'hs360', 'hs 360', '3019phc', 'datron', 'sherpa graph', 'white shadow',
 ];
 
 // ════════════════════════════════════════════════════════════════════════

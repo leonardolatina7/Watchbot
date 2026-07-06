@@ -566,6 +566,22 @@ function detectMetal(t) {
 //    peso → scarsità futura. Se il titolo combacia, aggiungo un suggerimento
 //    operativo all'alert oro: non è un flip, è un accumulo da tenere. ──
 const MELT_SCARCITY_BRANDS = ['omega','longines','iwc','universal','movado','vacheron','patek','girard','jaeger','lecoultre','zenith','eterna','eberhard'];
+
+// ── OVERRIDE COLLEZIONE (v12.30, 07/07/26 — bug confermato: i cal.321 finivano
+//    nel ramo melt): certe referenze valgono MULTIPLI del metallo. Su questi
+//    pezzi il bot NON deve mai dire "vale il suo oro, tratta al ribasso" —
+//    il metro giusto sono i venduti da collezione, non la bilancia.
+//    I numeri di referenza nudi (2884, 2451...) valgono SOLO vicino a una
+//    parola Omega, così un prezzo "2884 zł" non scatena falsi allarmi. ──
+const COLLECTOR_CAL = /\b(cal\.?\s*321|calibre\s*321|caliber\s*321|13zn|13\.33|30\s?ch|zenith\s*135|el\s*primero|a386)\b/i;
+const COLLECTOR_REF_OMEGA = /\b(omega|seamaster|speedmaster)\b[\s\S]{0,40}\b(ot\s*)?(2279|2439|2451|2468|2884|2915|2998)\b|\b(ot\s*)?(2279|2439|2451|2468|2884|2915|2998)\b[\s\S]{0,40}\b(omega|seamaster|speedmaster)\b/i;
+// v12.31: anche l'ACCIAIO da collezione — calibri/modelli élite delle sessioni.
+// Token specifici (non brand generici) = quasi zero falsi positivi.
+const COLLECTOR_STEEL = /\b(valjoux\s*(72|23)\b|excelsior\s*park|hs\s*-?\s*360|3019\s*phc|datron|sherpa\s*graph|deepstar|white\s*shadow|super\s*compressor|supercompressor|broad\s*arrow|chronomaster\s+(aviator|sea)|polerouter|microrotor|micro[\s-]?rotor)/i;
+function isCollectorPiece(title) {
+  const s = String(title || '');
+  return COLLECTOR_CAL.test(s) || COLLECTOR_REF_OMEGA.test(s) || COLLECTOR_STEEL.test(s);
+}
 function meltScarcityHint(title) {
   const s = String(title||'').toLowerCase();
   const isNoble = MELT_SCARCITY_BRANDS.some(b => s.includes(b));
@@ -1879,14 +1895,19 @@ async function runGoldScan(mode = 'all') {
               const offerta = Math.round(Math.min(metal.metalValue * 0.85, priceEur * 0.75) / 10) * 10;
               const guadagnoSeOfferta = metal.metalValue - offerta;
               const compraSubito = metal.diffPct >= 0;
-              const titolo = compraSubito ? `${emoji} <b>${name} \u2014 COMPRA SUBITO \u{1F525}</b>` : `${emoji} <b>${name} \u2014 OCCASIONE METALLO</b>`;
+              const _collector = isCollectorPiece(item.title);
+              const titolo = _collector
+                ? `\u{1F3C6} <b>${name} + CALIBRO DA COLLEZIONE</b>`
+                : (compraSubito ? `${emoji} <b>${name} \u2014 COMPRA SUBITO \u{1F525}</b>` : `${emoji} <b>${name} \u2014 OCCASIONE METALLO</b>`);
               await tg(
                 `${titolo}\n\n\u231A ${item.title?.slice(0,65)}\n`+
                 `\u{1F4B0} Chiede: <b>\u20AC${priceEur.toLocaleString('it-IT')}</b>\n`+
                 `\u{1F48E} Se \u00E8 oro massiccio, sotto c'\u00E8 ${name==='PLATINO'?'platino':'oro'} per ~<b>\u20AC${metal.metalValue.toLocaleString('it-IT')}</b> (peso tipico del modello ~${metal.pureMetalGrams}g, <b>DA PESARE</b>)\n`+
                 `\u26A0\uFE0F Conferma SEMPRE: caratura punzonata (750/18k) + peso della SOLA cassa. Ghiera/corona/indici in oro o cappato = NON massiccio.\n`+
                 (metal.diffPct>0 ? `\u{1F4C9} Gi\u00E0 <b>\u2212${metal.diffPct}% sotto il metallo</b>\n` : metal.diffPct===0 ? `\u2696\uFE0F <b>Esattamente al valore del metallo</b>\n` : `\u{1F4CA} Solo ${Math.abs(metal.diffPct)}% sopra il metallo\n`)+
-                (compraSubito ? `\n\u{1F512} <b>Acquisto sicuro:</b> paghi quanto vale il metallo, e l'oro storicamente sale nel lungo periodo.\n` : `\n\u{1F3AF} <b>Tratta.</b> Offri ~\u20AC${offerta.toLocaleString('it-IT')}: guadagno \u20AC${guadagnoSeOfferta.toLocaleString('it-IT')} garantito dal metallo.\n`)+
+                (_collector
+                  ? `\n\u{1F3C6} <b>NON \u00E8 un pezzo da fuso:</b> questa referenza/calibro (321 e famiglia) vale MULTIPLI del metallo. L'oro qui \u00E8 solo il PAVIMENTO di sicurezza: confronta coi VENDUTI da collezione prima di offrire \u2014 se il prezzo \u00E8 vicino al metallo, \u00E8 un affare che urla.\n`
+                  : (compraSubito ? `\n\u{1F512} <b>Acquisto sicuro:</b> paghi quanto vale il metallo, e l'oro storicamente sale nel lungo periodo.\n` : `\n\u{1F3AF} <b>Tratta.</b> Offri ~\u20AC${offerta.toLocaleString('it-IT')}: guadagno \u20AC${guadagnoSeOfferta.toLocaleString('it-IT')} garantito dal metallo.\n`))+
                 meltScarcityHint(item.title)+
                 `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
                 `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
@@ -1967,9 +1988,11 @@ async function runGoldScan(mode = 'all') {
           if (!ai) funnelBump('aiSenzaRisposta'); else if (!ai.isInteresting) funnelBump('aiNonInteressante'); else funnelBump('aiInteressante');
           // ── MIGLIORI DEL GIRO (v12.26): registro ogni pezzo con una stima,
           //    anche se bocciato dalle soglie — mai più un giro muto senza
-          //    contesto. I 3 migliori finiscono nel riepilogo scansione. ──
-          if (ai && ai.valueLow && priceEur > 0 && cycleBest.length < 60) {
-            cycleBest.push({ t: (item.title || '').slice(0, 55), p: priceEur, low: Number(ai.valueLow), url: item.url, ok: !!ai.isInteresting });
+          //    contesto. v12.31: i pezzi DA COLLEZIONE (oro o acciaio) entrano
+          //    SEMPRE, anche senza stima e anche se l'AI li boccia — flag 🏆. ──
+          const _coll = isCollectorPiece(item.title);
+          if (ai && (ai.valueLow || _coll) && priceEur > 0 && cycleBest.length < 60) {
+            cycleBest.push({ t: (item.title || '').slice(0, 55), p: priceEur, low: Number(ai.valueLow) || 0, url: item.url, ok: !!ai.isInteresting, coll: _coll });
           }
           trace(ai ? (ai.isInteresting ? `3.AI INTERESSANTE (${ai.brand||'?'})` : `SCARTATO: AI dice non-interessante (brand letto: ${ai.brand||'?'})`) : 'SCARTATO: AI nessuna risposta');
           if (ai && ai.isInteresting) {
@@ -2275,11 +2298,12 @@ async function runGoldScan(mode = 'all') {
   } catch {}
   let bestTxt = '';
   try {
-    const top = cycleBest.filter(x => x.low > 0)
-      .map(x => ({ ...x, d: Math.round(((x.low - x.p) / x.low) * 100) }))
-      .sort((a, b) => b.d - a.d).slice(0, 3);
+    const top = cycleBest
+      .map(x => ({ ...x, d: x.low > 0 ? Math.round(((x.low - x.p) / x.low) * 100) : null }))
+      .sort((a, b) => ((b.coll ? 1 : 0) - (a.coll ? 1 : 0)) || ((b.d ?? -999) - (a.d ?? -999)))
+      .slice(0, 3);
     if (top.length) bestTxt = '\n🔭 <b>Migliori del giro</b> (anche sotto soglia):\n' +
-      top.map(x => `• ${x.d >= 0 ? `${x.d}% sotto stima` : `${-x.d}% sopra stima`} — ${x.t} — €${x.p.toLocaleString('it-IT')} <a href="${x.url}">vedi</a>`).join('\n') + '\n';
+      top.map(x => `• ${x.coll ? '🏆 ' : ''}${x.d === null ? 'referenza da collezione' : (x.d >= 0 ? `${x.d}% sotto stima` : `${-x.d}% sopra stima`)} — ${x.t} — €${x.p.toLocaleString('it-IT')} <a href="${x.url}">vedi</a>`).join('\n') + '\n';
   } catch {}
   await tg(
     `📊 <b>Scansione completata</b>\n\n🥇 Oro: €${gold.toFixed(2)}/g | 🔘 Platino: €${platinum.toFixed(2)}/g\n\n`+
@@ -2399,7 +2423,7 @@ app.get('/api/diagnostica', async (req, res) => {
   } catch (e) { out._metalli = { errore: e.message }; }
   out._query = q;
   // ── AUTODIAGNOSI v12.10: dice subito se le ultime novità sono ONLINE ──
-  out._versione = '12.29';
+  out._versione = '12.31';
   out._src_health = SRC_HEALTH;
   out._funnel = FUNNEL;
   out._nuovi_mercati = {
