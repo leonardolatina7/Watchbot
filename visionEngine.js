@@ -81,6 +81,13 @@ function noteErr(engine, e, model) {
     _deadModels.add(model);
     console.warn(`[visionEngine] modello '${model}' non valido (${status} ${msg}) → passo al candidato successivo`);
   }
+  // Limite di utilizzo dell'ACCOUNT Anthropic (non modello, non chiave):
+  // insistere spreca solo tempo di scan. Pausa 6h, la catena scivola su
+  // Gemini/Groq. Si sblocca prima se un autotest Claude riesce.
+  if ((engine === 'claude' || engine === 'haiku') && /usage limits/i.test(msg)) {
+    _claudeLockedUntil = Date.now() + 6 * 3600 * 1000;
+    console.warn('[visionEngine] ⛔ Limite account Anthropic raggiunto → pausa Claude 6h. Alza il limite su console.anthropic.com (Settings → Limits) e lancia /api/test-motori per riattivare subito.');
+  }
 }
 
 // ── TETTO GIORNALIERO CLAUDE (v12.22, garanzia budget) ─────────────────────
@@ -91,7 +98,9 @@ function noteErr(engine, e, model) {
 const CLAUDE_DAILY_CAP = parseInt(process.env.CLAUDE_DAILY_CAP || '40', 10);
 let _claudeToday = 0;
 let _claudeDay = new Date().toDateString();
+let _claudeLockedUntil = 0; // v12.29: pausa Claude dopo errore "usage limits" dell'account
 function claudeBudgetOk() {
+  if (Date.now() < _claudeLockedUntil) return false; // account al limite: inutile insistere
   const today = new Date().toDateString();
   if (today !== _claudeDay) { _claudeDay = today; _claudeToday = 0; } // reset a mezzanotte
   if (_claudeToday >= CLAUDE_DAILY_CAP) return false;
@@ -109,6 +118,7 @@ const HAIKU_MODEL = process.env.CLAUDE_HAIKU_MODEL || 'claude-haiku-4-5';
 const HAIKU_DAILY_CAP = parseInt(process.env.HAIKU_DAILY_CAP || '150', 10);
 let _haikuToday = 0, _haikuDay = new Date().getDate();
 function haikuBudgetOk() {
+  if (Date.now() < _claudeLockedUntil) return false; // account al limite: vale anche per Haiku
   const d = new Date().getDate();
   if (d !== _haikuDay) { _haikuDay = d; _haikuToday = 0; }
   return _haikuToday < HAIKU_DAILY_CAP;
@@ -183,7 +193,15 @@ async function claudeCall(contentBlocks, { maxTokens = 1200, system = null, mode
 // ============================================================================
 //  GEMINI
 // ============================================================================
-async function geminiCall(parts, { maxTokens = 1200, temperature = 0.2, jsonMode = false } = {}) {
+// ── CATENA MODELLI GEMINI (v12.29, fix "gemini-1.5-flash ritirato" nelle env):
+//    stessa auto-riparazione di Claude — se il modello (env o default) è morto,
+//    viene marcato e si passa al candidato successivo. ──
+function geminiModelFor() {
+  const cands = [process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+  const list = [...new Set(cands.filter(Boolean))];
+  return list.find(m => !_deadModels.has(m)) || list[list.length - 1];
+}
+async function geminiCall(parts, { maxTokens = 1200, temperature = 0.2, jsonMode = false, model = null } = {}) {
   const body = {
     contents: [{ role: 'user', parts }],
     generationConfig: {
@@ -192,7 +210,7 @@ async function geminiCall(parts, { maxTokens = 1200, temperature = 0.2, jsonMode
       ...(jsonMode ? { responseMimeType: 'application/json' } : {}),
     },
   };
-  const r = await axios.post(GEMINI_URL(GEMINI_MODEL), body, {
+  const r = await axios.post(GEMINI_URL(model || GEMINI_MODEL), body, {
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
     timeout: 30000,
   });
@@ -266,13 +284,15 @@ async function textComplete(prompt, opts = {}) {
   }
 
   if (GEMINI_KEY) {
+    const _gm = geminiModelFor();
     try {
       await _throttle();
-      const out = await geminiCall([{ text: prompt }], o);
+      const out = await geminiCall([{ text: prompt }], { ...o, model: _gm });
       stats.geminiOk++;
       return out;
     } catch (e) {
       stats.geminiFail++;
+      noteErr('gemini', e, _gm);
       console.error('[visionEngine] Gemini testo fallito:', e.response?.status || '', e.message, '→ fallback Groq');
     }
   }
@@ -336,17 +356,19 @@ async function visionComplete(imageUrl, prompt, opts = {}) {
   }
 
   if (GEMINI_KEY) {
+    const _gvm = geminiModelFor();
     try {
       await _throttle();
       const parts = [
         { text: prompt },
         { inline_data: { mime_type: img.mediaType, data: img.base64 } },
       ];
-      const out = await geminiCall(parts, o);
+      const out = await geminiCall(parts, { ...o, model: _gvm });
       stats.geminiOk++;
       return out;
     } catch (e) {
       stats.geminiFail++;
+      noteErr('gemini', e, _gvm);
       console.error('[visionEngine] Gemini vision fallito:', e.response?.status || '', e.message, '→ fallback Groq');
     }
   }
@@ -423,11 +445,14 @@ async function selfTest() {
     await tryOne('sonnet', () => claudeCall([{ type: 'text', text: PROMPT }], { maxTokens: 200, model: sm }), sm);
     const hm = claudeModelFor('haiku');
     await tryOne('haiku', () => claudeCall([{ type: 'text', text: PROMPT }], { maxTokens: 200, model: hm }), hm);
+    // Se almeno uno dei due risponde, l'account è tornato disponibile:
+    // sblocco subito l'eventuale pausa "usage limits".
+    if (results.some(r => (r.engine === 'sonnet' || r.engine === 'haiku') && r.ok)) _claudeLockedUntil = 0;
   } else {
     results.push({ engine: 'sonnet', ok: false, errore: 'chiave assente (ANTHROPIC_API_KEY)' });
     results.push({ engine: 'haiku', ok: false, errore: 'chiave assente (ANTHROPIC_API_KEY)' });
   }
-  if (GEMINI_KEY) await tryOne('gemini', () => geminiCall([{ text: PROMPT }], { maxTokens: 64 }), GEMINI_MODEL);
+  if (GEMINI_KEY) { const _gm = geminiModelFor(); await tryOne('gemini', () => geminiCall([{ text: PROMPT }], { maxTokens: 64, model: _gm }), _gm); }
   else results.push({ engine: 'gemini', ok: false, errore: 'chiave assente (GEMINI_API_KEY)' });
   if (GROQ_KEY) await tryOne('groq', () => groqCallWithRetry([{ role: 'user', content: PROMPT }], GROQ_MODEL, { maxTokens: 64 }), GROQ_MODEL);
   else results.push({ engine: 'groq', ok: false, errore: 'chiave assente (GROQ_API_KEY)' });

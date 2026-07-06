@@ -156,6 +156,7 @@ const GIST_ID    = process.env.GIST_ID || '';
 const GIST_TOKEN = process.env.GITHUB_TOKEN || process.env.GIST_TOKEN || '';
 const GIST_FILE  = 'watchbot-state.json';
 const gistOn = !!(GIST_ID && GIST_TOKEN);
+let gistLastError = null; // v12.29: ultimo errore Gist, esposto nell'autotest
 let _gistTimer = null;
 
 async function gistLoad() {
@@ -167,7 +168,7 @@ async function gistLoad() {
     });
     const f = r.data.files && r.data.files[GIST_FILE];
     if (f && f.content) return JSON.parse(f.content);
-  } catch (e) { console.error('[GIST] load:', e.response?.status || e.message); }
+  } catch (e) { gistLastError = 'load ' + (e.response?.status || e.message); console.error('[GIST] load:', e.response?.status || e.message); }
   return null;
 }
 // PROTEZIONE ANTI-AZZERAMENTO: finché il caricamento iniziale del Gist non è
@@ -188,7 +189,7 @@ function gistSaveDebounced(payload) {
         { files: { [GIST_FILE]: { content: JSON.stringify(payload) } } },
         { headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 12000 });
       console.log(`[GIST] salvato (${(payload.dismissedUrls||[]).length} scartati, ${Object.keys(payload.alertedFps||{}).length} impronte, ${(payload.blacklistBrands||[]).length} marchi)`);
-    } catch (e) { console.error('[GIST] save:', e.response?.status || e.message); }
+    } catch (e) { gistLastError = 'save ' + (e.response?.status || e.message); console.error('[GIST] save:', e.response?.status || e.message); }
   }, 4000);
 }
 
@@ -2398,7 +2399,7 @@ app.get('/api/diagnostica', async (req, res) => {
   } catch (e) { out._metalli = { errore: e.message }; }
   out._query = q;
   // ── AUTODIAGNOSI v12.10: dice subito se le ultime novità sono ONLINE ──
-  out._versione = '12.28';
+  out._versione = '12.29';
   out._src_health = SRC_HEALTH;
   out._funnel = FUNNEL;
   out._nuovi_mercati = {
@@ -2531,8 +2532,14 @@ app.get('/api/test-motori', async (req, res) => {
   try {
     const r = await require('./visionEngine').selfTest();
     res.json({
-      _versione: '12.28',
+      _versione: '12.29',
       motori: r,
+      memoria: {
+        gist_configurato: gistOn,
+        gist_caricato: gistLoadOk,
+        scarti_ricordati: db.dismissedFps.length,
+        ultimo_errore_gist: gistLastError,
+      },
       chiavi: {
         anthropic: !!process.env.ANTHROPIC_API_KEY,
         gemini: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
@@ -2998,8 +3005,13 @@ if (process.env.STARTUP_ENGINE_TEST !== 'false') {
       ).join('\n');
       const tutti = r.every(x => x.ok || /chiave assente/.test(String(x.errore || '')));
       const disponibili = r.some(x => x.ok);
+      const mem = gistOn
+        ? (gistLoadOk
+            ? `💾 Memoria scarti: ✅ Gist attivo — ${db.dismissedFps.length} scarti ricordati`
+            : `💾 Memoria scarti: ⚠️ Gist configurato ma NON caricato${gistLastError ? ` (${String(gistLastError).replace(/[<>&]/g, '')})` : ''} → gli scarti possono tornare`)
+        : `💾 Memoria scarti: ❌ NON configurata — mancano GIST_ID + GITHUB_TOKEN su Render → scarti e anti-ripetizione MUOIONO a ogni riavvio (è il motivo per cui i pezzi scartati tornano)`;
       await tg(
-        `🔧 <b>Autotest motori all'avvio</b> (v12.28)\n\n${righe}\n\n` +
+        `🔧 <b>Autotest motori all'avvio</b> (v12.29)\n\n${righe}\n\n${mem}\n\n` +
         (disponibili
           ? (tutti ? '✅ Tutto il configurato funziona: il bot analizza.' : '⚠️ Qualcosa fallisce: leggi l\'errore qui sopra, dice già la causa.')
           : '🛑 NESSUN motore funziona: il bot raccoglie ma non analizza. L\'errore sopra dice perché.')
