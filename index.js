@@ -1739,6 +1739,7 @@ async function runGoldScan(mode = 'all') {
   console.log(`\n[SCAN v12.4 ${mode==='subito'?'SUBITO':'COMPLETA'}] Oro: €${gold.toFixed(2)}/g | Platino: €${platinum.toFixed(2)}/g`);
 
   let foundArb=0, foundNear=0, foundVintage=0, foundStudy=0, foundInvestor=0, foundGrezzo=0;
+  const cycleBest = []; // ── v12.26: ogni pezzo con stima, anche bocciato → "migliori del giro"
   const seenUrls = new Set([...db.arbitrage,...db.nearArbitrage,...db.vintageDeals].map(a=>normUrl(a.url)));
   const activeQueries = getGoldQueries();
 
@@ -1963,6 +1964,12 @@ async function runGoldScan(mode = 'all') {
           const ai = await claudeAnalyst.analyzeListing(item.title, priceEur, item.image, { tier: _gate.tier });
           funnelBump('analizzatiAI');
           if (!ai) funnelBump('aiSenzaRisposta'); else if (!ai.isInteresting) funnelBump('aiNonInteressante'); else funnelBump('aiInteressante');
+          // ── MIGLIORI DEL GIRO (v12.26): registro ogni pezzo con una stima,
+          //    anche se bocciato dalle soglie — mai più un giro muto senza
+          //    contesto. I 3 migliori finiscono nel riepilogo scansione. ──
+          if (ai && ai.valueLow && priceEur > 0 && cycleBest.length < 60) {
+            cycleBest.push({ t: (item.title || '').slice(0, 55), p: priceEur, low: Number(ai.valueLow), url: item.url, ok: !!ai.isInteresting });
+          }
           trace(ai ? (ai.isInteresting ? `3.AI INTERESSANTE (${ai.brand||'?'})` : `SCARTATO: AI dice non-interessante (brand letto: ${ai.brand||'?'})`) : 'SCARTATO: AI nessuna risposta');
           if (ai && ai.isInteresting) {
             if (isBrandBlacklisted(ai.brand)) { seenUrls.add(nu); continue; }
@@ -2254,10 +2261,28 @@ async function runGoldScan(mode = 'all') {
   if (db.vintageDeals.length>500) db.vintageDeals=db.vintageDeals.slice(-500);
 
   console.log(`[SCAN] Fine: ${foundArb} arbitraggi, ${foundNear} trattabili, ${foundVintage} vintage, ${foundInvestor} investitore, ${foundStudy} da studiare, ${foundGrezzo} flip grezzo`);
+  // ── RIEPILOGO AUTO-DIAGNOSTICO (v12.26): il messaggio dice DA SOLO dove
+  //    muoiono i segnali (funnel del giorno + stato motori AI) e mostra i 3
+  //    migliori candidati visti, anche sotto soglia. "Tutto 0" senza contesto
+  //    non esiste più. ──
+  let statoTxt = '';
+  try {
+    const st = require('./visionEngine').getStats() || {};
+    statoTxt = `\n🔬 Oggi: <b>${FUNNEL.analizzatiAI}</b> analizzati AI · <b>${FUNNEL.aiInteressante}</b> promossi · <b>${FUNNEL.aiNonInteressante}</b> bocciati · <b>${FUNNEL.aiSenzaRisposta}</b> senza risposta\n⚙️ Motori: gemini ${st.geminiOk||0}✓/${st.geminiFail||0}✗ · groq ${st.groqOk||0}✓/${st.groqFail||0}✗ · haiku ${st.haikuOk||0}✓/${st.haikuFail||0}✗ · sonnet ${st.claudeOk||0}✓/${st.claudeFail||0}✗\n`;
+  } catch {}
+  let bestTxt = '';
+  try {
+    const top = cycleBest.filter(x => x.low > 0)
+      .map(x => ({ ...x, d: Math.round(((x.low - x.p) / x.low) * 100) }))
+      .sort((a, b) => b.d - a.d).slice(0, 3);
+    if (top.length) bestTxt = '\n🔭 <b>Migliori del giro</b> (anche sotto soglia):\n' +
+      top.map(x => `• ${x.d >= 0 ? `${x.d}% sotto stima` : `${-x.d}% sopra stima`} — ${x.t} — €${x.p.toLocaleString('it-IT')} <a href="${x.url}">vedi</a>`).join('\n') + '\n';
+  } catch {}
   await tg(
     `📊 <b>Scansione completata</b>\n\n🥇 Oro: €${gold.toFixed(2)}/g | 🔘 Platino: €${platinum.toFixed(2)}/g\n\n`+
     `🥇 Arbitraggi metallo: <b>${foundArb}</b>\n💛 Trattabili: <b>${foundNear}</b>\n🏺 Occasioni vintage: <b>${foundVintage}</b>\n📈 Investitore (accumula): <b>${foundInvestor}</b>\n📚 Da studiare: <b>${foundStudy}</b>\n🔧 Flip grezzo: <b>${foundGrezzo}</b>\n`+
-    (foundArb===0&&foundNear===0&&foundVintage===0&&foundInvestor===0&&foundStudy===0?'\nNessuna opportunità in questo ciclo.':'')
+    statoTxt + bestTxt +
+    (foundArb===0&&foundNear===0&&foundVintage===0&&foundInvestor===0&&foundStudy===0&&!bestTxt?'\nNessuna opportunità in questo ciclo.':'')
   );
   return {foundArb, foundNear, foundVintage, foundInvestor, foundStudy};
 }
