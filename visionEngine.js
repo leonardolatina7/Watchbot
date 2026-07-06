@@ -62,7 +62,7 @@ const stats = { claudeOk: 0, claudeFail: 0, geminiOk: 0, geminiFail: 0, groqOk: 
 //    massimo CLAUDE_DAILY_CAP chiamate Sonnet al giorno (default 20 ≈ pochi
 //    centesimi/giorno ≈ ben sotto i 20€/mese). Superato il tetto, TUTTO passa
 //    su Gemini/Groq gratis fino a mezzanotte. Configurabile via env su Render.
-const CLAUDE_DAILY_CAP = parseInt(process.env.CLAUDE_DAILY_CAP || '20', 10);
+const CLAUDE_DAILY_CAP = parseInt(process.env.CLAUDE_DAILY_CAP || '40', 10);
 let _claudeToday = 0;
 let _claudeDay = new Date().toDateString();
 function claudeBudgetOk() {
@@ -72,6 +72,22 @@ function claudeBudgetOk() {
   return true;
 }
 function claudeBudgetSpend() { _claudeToday++; if (_claudeToday === CLAUDE_DAILY_CAP) console.warn(`[visionEngine] ⛔ Tetto Claude raggiunto (${CLAUDE_DAILY_CAP}/giorno): da ora solo Gemini/Groq fino a mezzanotte`); }
+
+// ── SOCCORSO HAIKU (v12.25, 06/07/26): quando i motori gratis muoiono
+//    (Gemini assente, Groq in 429) il tier NORMAL prima tornava null e
+//    l'annuncio moriva SENZA analisi — era il motivo per cui i grezzi non
+//    arrivavano mai. Coi crediti Anthropic ora ripiega su Haiku (modello
+//    economico, centesimi), con tetto giornaliero SUO, separato da Sonnet.
+//    Tarabile da Render: HAIKU_DAILY_CAP (default 150), CLAUDE_HAIKU_MODEL. ──
+const HAIKU_MODEL = process.env.CLAUDE_HAIKU_MODEL || 'claude-haiku-4-5';
+const HAIKU_DAILY_CAP = parseInt(process.env.HAIKU_DAILY_CAP || '150', 10);
+let _haikuToday = 0, _haikuDay = new Date().getDate();
+function haikuBudgetOk() {
+  const d = new Date().getDate();
+  if (d !== _haikuDay) { _haikuDay = d; _haikuToday = 0; }
+  return _haikuToday < HAIKU_DAILY_CAP;
+}
+function haikuBudgetSpend() { _haikuToday++; if (_haikuToday === HAIKU_DAILY_CAP) console.warn(`[visionEngine] ⛔ Tetto Haiku raggiunto (${HAIKU_DAILY_CAP}/giorno): tier normal senza AI fino a mezzanotte`); }
 
 function getStats() {
   return {
@@ -117,9 +133,9 @@ async function fetchImageBase64(imageUrl) {
 //    Per guidare il comportamento si usa solo il prompt/system. Era la causa
 //    del 400 "Request failed" su ogni chiamata. ──
 // ============================================================================
-async function claudeCall(contentBlocks, { maxTokens = 1200, system = null } = {}) {
+async function claudeCall(contentBlocks, { maxTokens = 1200, system = null, model = null } = {}) {
   const body = {
-    model: CLAUDE_MODEL,
+    model: model || CLAUDE_MODEL,
     max_tokens: maxTokens,
     messages: [{ role: 'user', content: contentBlocks }],
   };
@@ -244,6 +260,20 @@ async function textComplete(prompt, opts = {}) {
       console.error('[visionEngine] Groq testo fallito:', e.response?.status || '', e.message);
     }
   }
+
+  // ── SOCCORSO HAIKU: Gemini/Groq morti. Ultimo tentativo sul modello
+  //    economico prima di arrendersi (vedi nota v12.25 in alto). ──
+  if (CLAUDE_KEY && haikuBudgetOk()) {
+    try {
+      await _throttle();
+      const out = await claudeCall([{ type: 'text', text: prompt }], { maxTokens: o.maxTokens, model: HAIKU_MODEL });
+      stats.haikuOk = (stats.haikuOk || 0) + 1; haikuBudgetSpend();
+      return out;
+    } catch (e) {
+      stats.haikuFail = (stats.haikuFail || 0) + 1;
+      console.error('[visionEngine] Haiku soccorso testo fallito:', e.response?.status || '', e.message);
+    }
+  }
   return null;
 }
 
@@ -305,6 +335,23 @@ async function visionComplete(imageUrl, prompt, opts = {}) {
     } catch (e) {
       stats.groqFail++;
       console.error('[visionEngine] Groq vision fallito:', e.response?.status || '', e.message);
+    }
+  }
+
+  // ── SOCCORSO HAIKU (vision): Haiku è multimodale, la foto si analizza
+  //    comunque anche senza Gemini (vedi nota v12.25 in alto). ──
+  if (CLAUDE_KEY && haikuBudgetOk()) {
+    try {
+      await _throttle();
+      const out = await claudeCall([
+        { type: 'text', text: prompt },
+        { type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.base64 } },
+      ], { maxTokens: o.maxTokens, model: HAIKU_MODEL });
+      stats.haikuOk = (stats.haikuOk || 0) + 1; haikuBudgetSpend();
+      return out;
+    } catch (e) {
+      stats.haikuFail = (stats.haikuFail || 0) + 1;
+      console.error('[visionEngine] Haiku soccorso vision fallito:', e.response?.status || '', e.message);
     }
   }
   return null;

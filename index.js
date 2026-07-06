@@ -664,6 +664,14 @@ function isBroadCategoryMarket(platform) {
   return BROAD_CATEGORY_MARKETS.some(m => p.includes(m));
 }
 
+// ── SALUTE FONTI ESTERE (v12.25): ultimo esito per scraper → /api/diagnostica.
+//    Così si vede SUBITO se una fonte risponde, quanti risultati dà, o con che
+//    errore muore (403 = bloccati, timeout = lenti, 0 = query/layout). Prima
+//    "non trova niente" era invisibile senza i log di Render. ──
+const SRC_HEALTH = {};
+function srcOk(name, n) { SRC_HEALTH[name] = { ok: true, risultati: n, quando: new Date().toISOString() }; }
+function srcErr(name, e) { SRC_HEALTH[name] = { ok: false, errore: String(e?.response?.status || e?.code || e?.message || e).slice(0, 120), quando: new Date().toISOString() }; }
+
 // Vecchia firma mantenuta per compatibilità: blacklist generica.
 function looksLikeWatchListing(title) {
   if (!title) return true; // titolo vuoto: non posso giudicare, tengo
@@ -1169,6 +1177,7 @@ async function searchVinted(query) {
   } catch(e) { console.error('[Vinted]',e.message); return []; }
 }
 async function searchWallapop(query) {
+  query = adaptQueryForMarket(query, 'es');
   try {
     await sleep(900+Math.random()*500);
     const r = await axios.get(`https://api.wallapop.com/api/v3/general/search?keywords=${encodeURIComponent(query)}&category_ids=14000&min_sale_price=200&order_by=price_low_to_high`, { headers:{'User-Agent':rUA(),'Accept':'application/json'}, timeout:12000 });
@@ -1200,6 +1209,7 @@ async function searchRicardo(query) {
   } catch(e) { console.error('[Ricardo]',e.message); return []; }
 }
 async function searchMarktplaats(query) {
+  query = adaptQueryForMarket(query, 'nl');
   try {
     await sleep(1000+Math.random()*500);
     const r = await axios.get(`https://www.marktplaats.nl/lrp/api/search?query=${encodeURIComponent(query)}&categoryId=363&priceFrom=200&sortBy=PRICE_ASC&limit=12`, { headers:{'User-Agent':rUA(),'Accept':'application/json'}, timeout:12000 });
@@ -1211,11 +1221,34 @@ async function searchMarktplaats(query) {
     })).filter(i=>i.price>=SCAN_FLOOR&&i.title);
   } catch(e) { console.error('[Marktplaats]',e.message); return []; }
 }
+// ── ADATTATORE LINGUA QUERY (v12.25, 06/07/26): le query nascono in italiano,
+//    ma OLX.pl cercato con "orologio oro" restituisce ZERO — i polacchi
+//    scrivono "zegarek złoto", i rumeni "ceas aur". Prima di questo fix i
+//    mercati esteri trovavano SOLO annunci con nome-brand nel titolo (parole
+//    universali) — cioè i pezzi etichettati bene e prezzati giusti, dove
+//    l'affare non c'è. Qui i termini generici vengono tradotti nella lingua
+//    del mercato PRIMA della ricerca; i nomi di marca restano intatti. ──
+const QUERY_LANG_MAP = {
+  pl: [[/solo tempo/g,''],[/carica manuale/g,'naciąg ręczny'],[/orologio|orologi/g,'zegarek'],[/\boro\b/g,'złoto'],[/cronografo/g,'chronograf'],[/\buomo\b/g,'męski'],[/donna|signora/g,'damski'],[/eredità|eredita/g,'spadek'],[/d'epoca|epoca/g,'vintage'],[/massiccio/g,'']],
+  ro: [[/solo tempo/g,''],[/carica manuale/g,'mecanic'],[/orologio|orologi/g,'ceas'],[/\boro\b/g,'aur'],[/cronografo/g,'cronograf'],[/\buomo\b/g,'barbatesc'],[/donna|signora/g,'dama'],[/eredità|eredita/g,'mostenire'],[/d'epoca|epoca/g,'vintage'],[/massiccio/g,'masiv']],
+  nl: [[/solo tempo/g,''],[/carica manuale/g,'handopwinder'],[/orologio|orologi/g,'horloge'],[/\boro\b/g,'goud'],[/cronografo/g,'chronograaf'],[/\buomo\b/g,'heren'],[/donna|signora/g,'dames'],[/eredità|eredita/g,''],[/d'epoca|epoca/g,'vintage'],[/massiccio/g,'massief']],
+  es: [[/solo tempo/g,''],[/carica manuale/g,'cuerda manual'],[/orologio|orologi/g,'reloj'],[/cronografo/g,'cronografo'],[/\buomo\b/g,'hombre'],[/donna|signora/g,'mujer'],[/eredità|eredita/g,'herencia'],[/d'epoca|epoca/g,'antiguo'],[/massiccio/g,'macizo']],
+};
+function adaptQueryForMarket(query, lang) {
+  const rules = QUERY_LANG_MAP[lang];
+  if (!rules) return query;
+  let q = String(query || '').toLowerCase();
+  for (const [re, sub] of rules) q = q.replace(re, sub);
+  q = q.replace(/\s+/g, ' ').trim();
+  return q || query;
+}
+
 // ── OLX.pl (Polonia) — API JSON pubblica, più stabile dello scraping HTML.
 //    Prezzi in PLN (convertiti in EUR via toEur). EU = niente dogana.
 //    Mercato dell'Est: oro nobile spesso più freddo che in IT/DE.
 //    category_id 99 = Zegarki (orologi). Filtro prezzo min in PLN (~200€≈860 PLN).
 async function searchOlxPl(query) {
+  query = adaptQueryForMarket(query, 'pl');
   try {
     await sleep(1000+Math.random()*500);
     const r = await axios.get('https://www.olx.pl/api/v1/offers/', {
@@ -1237,8 +1270,9 @@ async function searchOlxPl(query) {
       });
     }
     if (results.length) console.log(`[OLX.pl] ${query}: ${results.length}`);
+    srcOk('OLX.pl', results.length);
     return results;
-  } catch(e) { console.error('[OLX.pl]', e.response?.status||e.code||e.message); return []; }
+  } catch(e) { srcErr('OLX.pl', e); console.error('[OLX.pl]', e.response?.status||e.code||e.message); return []; }
 }
 // ── Mercado Libre MESSICO (MLM) — API JSON pubblica ufficiale.
 //    Solo Messico: il sito ML più vicino agli USA, più probabile trovare orologi
@@ -1301,6 +1335,7 @@ async function searchMercadoLibreBR(query) {
 // ── OLX.ro (Romania) — stessa API JSON di OLX.pl. Prezzi in RON (leu rumeno).
 //    Mercato dell'Est: oro nobile spesso più freddo. Il bot segnala 🇷🇴.
 async function searchOlxRo(query) {
+  query = adaptQueryForMarket(query, 'ro');
   try {
     await sleep(1000+Math.random()*500);
     const r = await axios.get('https://www.olx.ro/api/v1/offers/', {
@@ -1321,8 +1356,9 @@ async function searchOlxRo(query) {
       });
     }
     if (results.length) console.log(`[OLX.ro] ${query}: ${results.length}`);
+    srcOk('OLX.ro', results.length);
     return results;
-  } catch(e) { console.error('[OLX.ro]', e.response?.status||e.code||e.message); return []; }
+  } catch(e) { srcErr('OLX.ro', e); console.error('[OLX.ro]', e.response?.status||e.code||e.message); return []; }
 }
 // ── Allegro.pl (Polonia) — il più grande marketplace polacco. Ha API ufficiale
 //    REST (api.allegro.pl) ma richiede OAuth client_credentials (come eBay).
@@ -1344,6 +1380,7 @@ async function getAllegroToken() {
   } catch(e) { console.error('[Allegro OAuth]', e.response?.status||e.message); return null; }
 }
 async function searchAllegroPl(query) {
+  query = adaptQueryForMarket(query, 'pl');
   try {
     const token = await getAllegroToken();
     if (!token) return []; // nessuna credenziale: non spara, niente crash
@@ -1364,8 +1401,9 @@ async function searchAllegroPl(query) {
       });
     }
     if (results.length) console.log(`[Allegro.pl] ${query}: ${results.length}`);
+    srcOk('Allegro.pl', results.length);
     return results;
-  } catch(e) { console.error('[Allegro.pl]', e.response?.status||e.code||e.message); return []; }
+  } catch(e) { srcErr('Allegro.pl', e); console.error('[Allegro.pl]', e.response?.status||e.code||e.message); return []; }
 }
 // ── Sprzedajemy.pl (Polonia) e Okazii.ro (Romania) — niente API pulita,
 //    scraping HTML leggero (FRAGILE per natura: se cambiano il layout, tornano
@@ -1373,6 +1411,7 @@ async function searchAllegroPl(query) {
 //    1) trovo i link annuncio con un title=; 2) cerco un prezzo (zł / lei) nelle
 //    vicinanze. Non dipende da una classe CSS specifica (la cosa più fragile).
 async function searchSprzedajemyPl(query) {
+  query = adaptQueryForMarket(query, 'pl');
   try {
     await sleep(900+Math.random()*400);
     const r = await axios.get('https://sprzedajemy.pl/szukaj', {
@@ -1397,10 +1436,12 @@ async function searchSprzedajemyPl(query) {
       if (title && pln >= 180) results.push({ platform:'Sprzedajemy 🇵🇱', title, price:pln, currency:'PLN', url, location:'' });
     }
     if (results.length) console.log(`[Sprzedajemy.pl] ${query}: ${results.length}`);
+    srcOk('Sprzedajemy.pl', results.length);
     return results;
   } catch(e) { console.error('[Sprzedajemy.pl]', e.response?.status||e.code||e.message); return []; }
 }
 async function searchOkaziiRo(query) {
+  query = adaptQueryForMarket(query, 'ro');
   try {
     await sleep(900+Math.random()*400);
     const r = await axios.get('https://www.okazii.ro/cauta', {
@@ -1553,6 +1594,27 @@ const QUERIES_BLOCK_G_MELT = [
   'Girard Perregaux oro 18k vintage','Jaeger LeCoultre oro 18k vintage',
   'Eterna oro 18k vintage','zegarek złoto 18k vintage','złoty zegarek Omega Longines',
 ];
+// ── BLOCCO H — QUERY GREZZE "VENDITORE IGNARO" (v12.24, fix segnali 06/07/26):
+//    gli affari NON stanno negli annunci etichettati bene ("Universal Geneve
+//    Polerouter"): chi scrive così SA cosa ha e prezza giusto. Gli affari
+//    stanno negli annunci generici — "orologio oro del nonno", "goldene Uhr
+//    Nachlass" — dove il venditore non sa cosa vende. Queste query pescano LÌ,
+//    multilingua, su tutti i mercati. Il gate di tesi e l'AI poi filtrano. ──
+const QUERIES_BLOCK_H_GREZZI = [
+  // Italia
+  'orologio oro 750 vintage', 'orologio oro 18k carica manuale',
+  'orologio d\'epoca oro massiccio', 'orologio oro eredità',
+  // Germania (mercato ricco di dress-gold sottoprezzati; Leonardo lo legge nativo)
+  'armbanduhr 750 gold handaufzug', 'herrenuhr 18k gold vintage', 'goldene uhr nachlass',
+  // Francia
+  'montre or 18k mecanique ancienne', 'montre or massif vintage',
+  // Olanda
+  'horloge 18k goud vintage',
+  // Polonia
+  'zegarek złoto 750 męski', 'złoty zegarek vintage',
+  // Spagna / internazionale
+  'reloj oro 18k antiguo', 'solid gold watch 18k manual wind',
+];
 // BLOCCO G — le query ENCICLOPEDICHE generate dalla watchlist (vedi encyclopedicQueries.js).
 const QUERIES_G_CORE = ['Wittnauer Valjoux 72 cronografo','Excelsior Park 40 cronografo','Enicar Sherpa Graph','Gallet Multichron 12','Universal Geneve Compax'];
 // Il pool si COSTRUISCE dall'Enciclopedia: marchi+modelli+calibri precisi e
@@ -1594,11 +1656,16 @@ function getGoldQueries() {
   scanCounter++;
   const tick = rotationTick(); // driver di rotazione durevole (vedi rotationTick)
   const night = isNightBoost();
-  const rotating = [QUERIES_BLOCK_A, QUERIES_BLOCK_B, QUERIES_BLOCK_C, QUERIES_BLOCK_D, QUERIES_BLOCK_E, QUERIES_BLOCK_F, QUERIES_BLOCK_G_MELT];
-  // Di notte: TRE blocchi tematici diversi a rotazione; di giorno: due.
+  const rotating = [QUERIES_BLOCK_A, QUERIES_BLOCK_B, QUERIES_BLOCK_C, QUERIES_BLOCK_D, QUERIES_BLOCK_E, QUERIES_BLOCK_F];
+  // ── FIX SEGNALI (v12.24, 06/07/26): la TESI gira SEMPRE, i temi ruotano.
+  //    Prima G_MELT era 1 blocco su 7 → le query della tesi melt-scarcity
+  //    giravano ~1 volta ogni 7 ore di giorno, e le generiche "venditore
+  //    ignaro" non esistevano. Ora G_MELT + H_GREZZI entrano in OGNI scan;
+  //    i blocchi collezionismo (crono/diver, fuori tesi melt per definizione)
+  //    ruotano come contorno: 1 blocco di giorno, 2 di notte. ──
   const themed = night
-    ? [...rotating[tick % rotating.length], ...rotating[(tick+2) % rotating.length], ...rotating[(tick+4) % rotating.length]]
-    : [...rotating[tick % rotating.length], ...rotating[(tick+3) % rotating.length]];
+    ? [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...rotating[tick % rotating.length], ...rotating[(tick+3) % rotating.length]]
+    : [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...rotating[tick % rotating.length]];
   // Finestra scorrevole sul pool enciclopedico: di NOTTE 30 query, di GIORNO 15.
   // Così la notte copre tutto il pool in pochi cicli e al mattino è tutto battuto.
   const N = night ? 30 : 15;
@@ -2259,7 +2326,8 @@ app.get('/api/diagnostica', async (req, res) => {
   } catch (e) { out._metalli = { errore: e.message }; }
   out._query = q;
   // ── AUTODIAGNOSI v12.10: dice subito se le ultime novità sono ONLINE ──
-  out._versione = '12.12';
+  out._versione = '12.25';
+  out._src_health = SRC_HEALTH;
   out._nuovi_mercati = {
     olx_pl: typeof searchOlxPl === 'function',
     olx_ro: typeof searchOlxRo === 'function',

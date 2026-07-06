@@ -308,7 +308,7 @@ function evaluateWithPrice(analysis, priceEur) {
   // dell'ignorante li manca quasi sempre). Segnale STRETTO di proposito: il
   // fashion / quarzo moderno NON ha un calibro così → resta fuori, gli scarti
   // restano puliti. Così i grezzi non muoiono qui sotto prima della rete.
-  const _grezzoCap = parseInt(process.env.FLIP_GREZZO_MAX || '400');
+  const _grezzoCap = parseInt(process.env.FLIP_GREZZO_MAX || '600');
   const grezzoForte =
     priceEur > 0 && priceEur <= _grezzoCap &&
     senzaAllarmiGraviGrezzo(analysis) &&
@@ -324,7 +324,7 @@ function evaluateWithPrice(analysis, priceEur) {
   // l'oscurità, lo mando lo stesso come "DA VERIFICARE TU" — meglio vederne
   // troppi e scartarli a mano che perdere l'affare grezzo. Filosofia: a fascia
   // bassa il volume batte la selezione, l'occhio finale è il tuo.
-  const FLIP_GREZZO_MAX = parseInt(process.env.FLIP_GREZZO_MAX || '400');
+  const FLIP_GREZZO_MAX = parseInt(process.env.FLIP_GREZZO_MAX || '600');
   const segnaliQualitaGrezzo =
     !!analysis.qualityMovement ||
     /ruota a colonn|column wheel|valjoux|venus|landeron|lemania|manufacture|manifattura/i.test(String(analysis.caliber||'') + ' ' + String(analysis.reasoning||'')) ||
