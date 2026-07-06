@@ -518,7 +518,7 @@ function detectMetal(t) {
     || /\b(oro|gold|or|gouden)\s+(ghiera|lunetta|bezel|corona|crown|fibbia|buckle)\b/i.test(s)
     || /\b(solo|only)\s+(la\s+)?(ghiera|lunetta|bezel|corona|crown)\b.*\b(oro|gold|or)\b/i.test(s)
     || /\b(acciaio\s*[\/e]+\s*oro|oro\s*[\/e]+\s*acciaio|steel\s*(and|&|\/)\s*gold|gold\s*(and|&|\/)\s*steel|two.?tone|bicolor|bicolore|acier\s*or|stahl\s*gold|staal\s*[\/e]*\s*goud|goud\s*[\/e]*\s*staal)\b/i.test(s)
-    || /\b(placcat|plated|plaqu|gold.?capped|cappato|laminat|gold.?filled|gold.?tone|gold.?plated|dorat|doré|doree|vergoldet|rolled\s*gold|microni|micron|plaque\s*or|gold\s*shell)\b/i.test(s)
+    || /\b(placcat|plated|plaqu|gold.?cap(ped)?\b|cappato|cappata|laminat|gold.?filled|gold.?tone|gold.?plated|dorat|doré|doree|vergoldet|rolled\s*gold|microni|micron|plaque\s*or|gold\s*shell)\b/i.test(s)
     // REGOLA FORTE (fix falso positivo Omega staal/goud): se nel titolo compaiono
     // INSIEME una parola-acciaio e una parola-oro, è bicolore/trim, NON oro massiccio.
     // Un vero orologio d'oro massiccio non scrive "acciaio/staal/steel" nel titolo.
@@ -536,16 +536,28 @@ function detectMetal(t) {
     'yellow gold','rose gold','white gold','solid gold','oro massiccio','oro giallo','oro rosa','oro bianco',
     'or jaune','or rose','or blanc','or massif','everose','sedna','moonshine','gelbgold','rotgold','weissgold',
     'oro 18k','oro 18kt','14k','14kt','oro 14','9k','9kt','oro 9'];
-  if (goldStrong.some(k => s.includes(k))) return '18k';
-
   // 4) Caratura come PUNZONE (750/585/375/999) — SOLO se accompagnata, vicino,
   //    da una parola d'oro vera. 916 RIMOSSA: collide con referenze/anni ed è
   //    un punzone rarissimo sugli orologi europei (era la causa del falso oro).
   //    "vicino" = entro pochi caratteri, così "750" isolato in un titolo non basta.
   const punzoneVicinoOro =
-    /\b(oro|gold|or|au)\b[^0-9]{0,6}(750|585|375|999)\b/i.test(s) ||
-    /\b(750|585|375|999)\b[^0-9]{0,6}(oro|gold|or|kt|karat|carat|ct)\b/i.test(s);
-  if (punzoneVicinoOro) return '18k';
+    /\b(oro|gold|or|au|z[łl]ot\w*|aur|goud\w*|golden\w*)\b[^0-9]{0,6}(750|585|375|999)\b/i.test(s) ||
+    /\b(750|585|375|999)\b[^0-9]{0,6}(oro|gold|or|kt|karat|carat|ct|aur|goud\w*)\b/i.test(s) ||
+    // Lingue con parola-oro lontana dal punzone ("złoty zegarek Longines 750",
+    // "gouden horloge 750"): finestra larga SOLO in avanti, ed ESCLUSO il caso
+    // valuta polacca — "750 zł" è un PREZZO, non un punzone.
+    /\b(z[łl]ot\w*|aur|goud\w*)\b[^0-9]{0,18}\b(750|585|375)\b(?!\s*z[łl])/i.test(s);
+
+  // ── CARATURA REALE (v12.26, fix Seamaster "14k Gold Cap" quotato come 18k):
+  //    prima QUALSIASI oro dichiarato tornava '18k' e la matematica del 750
+  //    veniva applicata anche a pezzi 585/375 → sopravvalutazione del 22-50%.
+  //    Ora la caratura dichiarata comanda; senza caratura esplicita resta 18k
+  //    (il caso tipico dei marchi nobili europei). ──
+  if (goldStrong.some(k => s.includes(k)) || punzoneVicinoOro) {
+    if (/\b(14\s?kt?|585)\b/i.test(s) && !/\b(18\s?kt?|750)\b/i.test(s)) return '14k';
+    if (/\b(9\s?kt?|375)\b/i.test(s) && !/\b(18\s?kt?|750)\b/i.test(s)) return '9k';
+    return '18k';
+  }
 
   return null;
 }
@@ -570,19 +582,37 @@ async function calcMetal(title, priceEur) {
   const model = findWatchModel(title);
   if (!model) return null;
   const spot = metal === 'platinum' ? platinum : gold;
-  const metalValue = Math.round(model.pureMetalGrams * spot);
+  // ── SCALA CARATURA (v12.26): il database pesi assume la versione 18k.
+  //    Stessa cassa in 14k/9k = stesso volume, meno fino dentro. ──
+  const purityAdj = metal === '14k' ? (0.585/0.75) : metal === '9k' ? (0.375/0.75) : 1;
+  const pureGrams = Math.round(model.pureMetalGrams * purityAdj * 10) / 10;
+  const gramsLowAdj  = model.gramsLow  ? Math.round(model.gramsLow  * purityAdj * 10) / 10 : null;
+  const gramsHighAdj = model.gramsHigh ? Math.round(model.gramsHigh * purityAdj * 10) / 10 : null;
+  // ── GUARDIA PESO (v12.26, fix falso positivo "Seamaster 71g" su vintage a
+  //    cinturino): i pesi grossi (>60g puri) nel database vengono dai modelli
+  //    moderni con BRACCIALE in oro integrato. Valgono SOLO se il titolo cita
+  //    la referenza esatta; senza referenza, il peso grosso NON si applica →
+  //    confidenza bassa, niente alert metallo (il pezzo prosegue verso l'AI). ──
+  let weightKnown = model.weightKnown === true;
+  let confidence = model.confidence;
+  if (model.pureMetalGrams > 60) {
+    const tRaw = String(title || '').toLowerCase();
+    const refHit = (model.refs || []).some(r => r && tRaw.includes(String(r).toLowerCase()));
+    if (!refHit) { weightKnown = false; confidence = 'low'; }
+  }
+  const metalValue = Math.round(pureGrams * spot);
   const diff = metalValue - priceEur;
   const diffPct = Math.round((diff/metalValue)*1000)/10;
-  const valueLow  = model.gramsLow  ? Math.round(model.gramsLow  * spot) : metalValue;
-  const valueHigh = model.gramsHigh ? Math.round(model.gramsHigh * spot) : metalValue;
+  const valueLow  = gramsLowAdj  ? Math.round(gramsLowAdj  * spot) : metalValue;
+  const valueHigh = gramsHighAdj ? Math.round(gramsHighAdj * spot) : metalValue;
   const safeFloor = valueLow;
   const underSafeFloor = priceEur <= safeFloor;
-  return { metal, pureMetalGrams: model.pureMetalGrams, metalValue,
-    gramsLow: model.gramsLow||null, gramsHigh: model.gramsHigh||null,
+  return { metal, pureMetalGrams: pureGrams, metalValue,
+    gramsLow: gramsLowAdj, gramsHigh: gramsHighAdj,
     valueLow, valueHigh, safeFloor, underSafeFloor,
     spotPrice: Math.round(spot*100)/100, diffPct, diff,
     isArbitrage: diffPct>0, isNear: diffPct>-15&&diffPct<=0,
-    confidence: model.confidence, weightKnown: model.weightKnown === true,
+    confidence, weightKnown,
     generic: model.generic === true, brand: model.brand };
 }
 
@@ -671,6 +701,17 @@ function isBroadCategoryMarket(platform) {
 const SRC_HEALTH = {};
 function srcOk(name, n) { SRC_HEALTH[name] = { ok: true, risultati: n, quando: new Date().toISOString() }; }
 function srcErr(name, e) { SRC_HEALTH[name] = { ok: false, errore: String(e?.response?.status || e?.code || e?.message || e).slice(0, 120), quando: new Date().toISOString() }; }
+
+// ── FUNNEL GIORNALIERO (v12.26): contatori di dove muoiono gli annunci.
+//    "Grezzi 0, da studiare 0" era invisibile: non si sapeva se il problema
+//    fosse a monte (niente candidati) o a valle (AI che boccia tutto).
+//    Visibile in /api/diagnostica → _funnel. Reset automatico a mezzanotte. ──
+const FUNNEL = { giorno: new Date().getDate(), senzaSegnaleForte: 0, gateTesiScartati: 0, analizzatiAI: 0, aiSenzaRisposta: 0, aiNonInteressante: 0, aiInteressante: 0 };
+function funnelBump(k) {
+  const d = new Date().getDate();
+  if (d !== FUNNEL.giorno) { for (const key of Object.keys(FUNNEL)) if (key !== 'giorno') FUNNEL[key] = 0; FUNNEL.giorno = d; }
+  FUNNEL[k] = (FUNNEL[k] || 0) + 1;
+}
 
 // Vecchia firma mantenuta per compatibilità: blacklist generica.
 function looksLikeWatchListing(title) {
@@ -1832,7 +1873,7 @@ async function runGoldScan(mode = 'all') {
             if (metalloSicuro) {
               seenUrls.add(nu); markAlerted(fp); saveState();
               const emoji = metal.metal==='platinum'?'\u{1F518}':'\u{1F947}';
-              const name = metal.metal==='platinum'?'PLATINO':'ORO 18K';
+              const name = metal.metal==='platinum'?'PLATINO': metal.metal==='14k' ? 'ORO 14K' : metal.metal==='9k' ? 'ORO 9K' : 'ORO 18K';
               const offerta = Math.round(Math.min(metal.metalValue * 0.85, priceEur * 0.75) / 10) * 10;
               const guadagnoSeOfferta = metal.metalValue - offerta;
               const compraSubito = metal.diffPct >= 0;
@@ -1897,6 +1938,7 @@ async function runGoldScan(mode = 'all') {
         //    Così le chiamate scendono da decine a poche per scan → niente 429. ──
         const _segnaleForte = hasWatchSignal(item.title) || !!watchlistHit(item.title) || !!vintage;
         if (!_segnaleForte) {
+          funnelBump('senzaSegnaleForte');
           trace(`SALTO AI (nessun segnale forte): ${item.title?.slice(0,50)}`);
           continue;
         }
@@ -1908,6 +1950,7 @@ async function runGoldScan(mode = 'all') {
         //    tier 'normal' = Gemini/Groq gratis. ──
         const _gate = aiGate.gate(item.title, priceEur, { isWatchlist: !!watchlistHit(item.title), isVintageDb: !!vintage });
         if (!_gate.pass) {
+          funnelBump('gateTesiScartati');
           trace(`SCARTATO dal gate di tesi: ${_gate.reason}`);
           console.log(`[GATE-TESI] salto (${_gate.reason}): ${item.title?.slice(0,55)}`);
           seenUrls.add(nu); // non rianalizzarlo ai prossimi giri
@@ -1918,6 +1961,8 @@ async function runGoldScan(mode = 'all') {
         // ── ANALISI AI = MOTORE PRINCIPALE (tier top → Claude; resto → Gemini/Groq) ──
         if (claudeAnalyst.isConfigured()) {
           const ai = await claudeAnalyst.analyzeListing(item.title, priceEur, item.image, { tier: _gate.tier });
+          funnelBump('analizzatiAI');
+          if (!ai) funnelBump('aiSenzaRisposta'); else if (!ai.isInteresting) funnelBump('aiNonInteressante'); else funnelBump('aiInteressante');
           trace(ai ? (ai.isInteresting ? `3.AI INTERESSANTE (${ai.brand||'?'})` : `SCARTATO: AI dice non-interessante (brand letto: ${ai.brand||'?'})`) : 'SCARTATO: AI nessuna risposta');
           if (ai && ai.isInteresting) {
             if (isBrandBlacklisted(ai.brand)) { seenUrls.add(nu); continue; }
@@ -2326,8 +2371,9 @@ app.get('/api/diagnostica', async (req, res) => {
   } catch (e) { out._metalli = { errore: e.message }; }
   out._query = q;
   // ── AUTODIAGNOSI v12.10: dice subito se le ultime novità sono ONLINE ──
-  out._versione = '12.25';
+  out._versione = '12.26';
   out._src_health = SRC_HEALTH;
+  out._funnel = FUNNEL;
   out._nuovi_mercati = {
     olx_pl: typeof searchOlxPl === 'function',
     olx_ro: typeof searchOlxRo === 'function',
