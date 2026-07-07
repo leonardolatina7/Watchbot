@@ -72,7 +72,24 @@ const watchlist = [
   //    ma B&M mid-tier. Regola: comprare SOLO per l'ORO a melt; il catalizzatore e' upside
   //    gratis, NON la ragione d'acquisto. Priorita ai crono oro con movimento nobile.
   { brand: 'Baume & Mercier', model: 'Cornes de Vache (crono calendario completo / fasi luna)', caliber: 'colonne vintage', maxBuy: 3500, note: 'IL tesoro del marchio. Anse a corna anni 50, crono cal-completo+luna oro. Cugino povero del Cornes de Vache Vacheron. Verificare originalita quadrante+movimento' },
-  { brand: 'Baume & Mercier', model: 'cronografo oro 18k vintage (Valjoux colonne / Lemania)', caliber: 'Valjoux 92 / Lemania', maxBuy: 1800, note: 'Solo crono ORO 18k con movimento NOBILE (Valjoux colonne o Lemania). Landeron 48/camma = solo valore oro a melt. NO quartz, NO Riviera acciaio, NO placcato/gold-filled' },
+  { brand: 'Baume & Mercier', model: 'cronografo oro 18k vintage (Valjoux colonne / Lemania)', caliber: 'Valjoux 92 / Lemania', maxBuy: 1800, note: 'Solo crono ORO 18k con movimento NOBILE (Valjoux colonne o Lemania). Landeron 48/camma = solo valore oro a melt. NO quartz, NO Riviera acciaio (eccezione sotto), NO placcato/gold-filled' },
+  //    ECCEZIONE alla regola "solo oro a melt": la Riviera prima serie e' ACCIAIO,
+  //    quindi SENZA floor melt. E' l'unica scommessa Damiani di PURA ATTENZIONE, perche'
+  //    e' il modello-bandiera che Damiani rilancera'. Comprare BASSO: se il rilancio non
+  //    tira, non c'e' fondo che protegge.
+  { brand: 'Baume & Mercier', model: 'Riviera prima serie ACCIAIO dodecagonale (pre-1980)', caliber: 'automatico/quartz vintage', maxBuy: 900, note: 'ECCEZIONE senza floor melt (acciaio). Modello-bandiera del rilancio Damiani = scommessa di PURA ATTENZIONE. Regola datazione: NIENTE scritta "Riviera" sul quadrante = prima serie pre-1980 = piu desiderabile. Cassa dodecagonale 12 lati, bracciale integrato. COMPRARE BASSO (<900): senza cuscino oro, se il rilancio non tira non c e fondo. Verificare quadrante originale (no redial) + cassa non lucidata a morte' },
+
+  // -- VACHERON CONSTANTIN SOLO-TEMPO CALIBRI NOBILI (agg. 07/07/26) -----------
+  //    Fonte: guida Beyond the Dial + venduti 07/26. Il CALIBRO decide il
+  //    premio: gerarchia 1007/1008 (Chronometer Royal, GRAIL) > K1001/K1002 e
+  //    453/454 (TOP, "tra i piu bei manuali mai fatti") > K1003 ultra-piatto e
+  //    1120 auto (CULT) > 1070/498/499 (RARI) > 1014 (MEDIO, mai Sigillo).
+  //    Regola strutturale: anni 40-60 VC faceva MAX 24 pezzi per referenza.
+  //    Trappola: cal. "1040" VC non e' mai esistito. Il modulo
+  //    vacheronCalibers.js fa il resto (coerenza secondi, refusi Costantin).
+  { brand: 'Vacheron Constantin', model: 'solo-tempo ORO cal. 453/454/K1001/K1002', caliber: '453/454/K1001/K1002', maxBuy: 4500, note: 'CUORE DELLA TESI: solo-tempo manifattura oro con floor melt (~2.500-3.500 su cassa jumbo). Privato/asta 3.500-5.500, dealer 5.000-7.000: comprare sotto 4.500 = margine o hold protetto. Verificare SEMPRE: quadrante originale (foxing ok, ritocchi no), coerenza secondi (453/1001=piccoli, 454/1002=centrali), Sigillo Ginevra sulle versioni /1 /2 /xB' },
+  { brand: 'Vacheron Constantin', model: 'Chronometer Royal (cal. 1007/1008)', caliber: '1007/1008', maxBuy: 6500, note: 'GRAIL dei solo-tempo VC: Sigillo Ginevra + COSC + hacking, 19 rubini. Raro e in ascesa: se compare sotto 6.500 e coerente, e caccia grossa. Chiedere foto movimento con stampigliatura BS' },
+  { brand: 'Vacheron Constantin', model: 'ultra-piatto cal. K1003 / auto cal. 1120 oro', caliber: 'K1003/1120', maxBuy: 5000, note: '1003 = manuale piu sottile di sempre (1,64mm), ancora in produzione: il vintage e sottovalutato vs Historiques moderno da 26.900 sterline. 1120 = base JLC 920, la STESSA di Royal Oak (AP 2120) e Nautilus (PP 28-255): argomento di rivendita fortissimo' },
 
   // -- BREITLING CHRONOMAT ROULEAUX (agg. 03/07/26, richiesta Leonardo) --------
   //    Vintage anni 80-90 (nato 1984 dopo Frecce Tricolori 83; bracciale rouleaux/bullet
