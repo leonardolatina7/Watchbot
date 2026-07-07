@@ -97,6 +97,8 @@ const aiGate = require('./aiGate'); // ── GATE DI TESI PRE-AI (v12.22): scar
 const ahciRadar = require('./ahciRadar'); // ── RADAR AHCI (v12.23): nuovi candidati indie allo stadio rumor ──
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
+const desperation = require('./desperationScore'); // ── MEMORIA PREZZI + PRESSIONE VENDITORE (v12.30) ──
+const coldAuctions = require('./coldAuctions'); // ── CANALI FREDDI: aste giudiziarie + dogana DE (v12.30) ──
 const blindHunter = safeRequire('./blindHunter', { huntGems: async () => [], longinesLine: () => '' });
 // ── RASSEGNA STAMPA delle 8:00 (tutte le news dalle fonti autorevoli) ──
 const morningBrief = safeRequire('./morningBrief', { runMorningBrief: async () => ({ sent: 0 }) });
@@ -229,6 +231,7 @@ function buildStatePayload() {
     observed: db.observed.slice(-300),
     alertedFps: db.alertedFps,
     ahciKnown: db.ahciKnown || [],
+    desperationMem: desperation.exportState(), // memoria prezzi/pressione (v12.30)
   };
 }
 function saveState() {
@@ -272,6 +275,7 @@ function loadState() {
       db.observed = s.observed || [];
       db.alertedFps = s.alertedFps || {};
       db.ahciKnown = Array.from(new Set([...(db.ahciKnown||[]), ...(s.ahciKnown||[])]));
+      try { desperation.importState(s.desperationMem); } catch {}
       console.log(`[STATE] Caricati da ${STATE_FILE}: ${db.blacklistBrands.length} marchi bloccati, ${db.dismissedUrls.length} annunci scartati, ${db.liked.length} piaciuti, ${db.observed.length} osservati, ${Object.keys(db.alertedFps).length} impronte`);
     }
   } catch (e) { console.error('[STATE] load:', e.message); }
@@ -295,6 +299,7 @@ async function loadStateGist() {
   if ((s.liked||[]).length    >= db.liked.length)    db.liked = s.liked;
   if ((s.observed||[]).length >= db.observed.length) db.observed = s.observed;
   db.alertedFps = Object.assign({}, s.alertedFps||{}, db.alertedFps||{});
+  try { desperation.importState(s.desperationMem, { merge: true }); } catch {}
   gistLoadOk = true; // SOLO ora abilito la scrittura sul Gist
   console.log(`[GIST] caricato: ${db.blacklistBrands.length} marchi bloccati, ${db.dismissedUrls.length} annunci scartati, ${Object.keys(db.alertedFps).length} impronte — scrittura ABILITATA`);
 }
@@ -668,7 +673,7 @@ const NOISE_TOKENS = [
 //    positivo = scartato. Questo blocca cuffie Klipsch, stereo JVC, manometri.
 //
 //    NB: i marketplace a categoria-orologi dedicata (eBay cat.watches, Subito,
-//    Chrono24, Catawiki, Vinted cat.14000, Marktplaats 363...) NON passano da
+//    Chrono24, Catawiki, Vinted cat.14000...) NON passano da
 //    qui: lì la categoria già garantisce che è un orologio, e un gate positivo
 //    rischierebbe di perdere annunci dal titolo scarno ("Omega oro" senza la
 //    parola "orologio"). Il gate positivo si applica SOLO ai mercati larghi.
@@ -1210,8 +1215,68 @@ async function searchSerpAPILocal(query) {
   } catch(e) { console.error('[SerpAPI local]',e.message); return []; }
 }
 
-// ══════════════ VINTED / WALLAPOP / RICARDO / MARKTPLAATS / FB ══════════════
+// ══════════════ VINTED / WALLAPOP / RICARDO / FB ══════════════
+// ── VINTED (riscritto 07/07/26): l'HTML di Vinted è renderizzato via JS, quindi
+//    cheerio sui selettori CSS trovava ~0. Ora uso l'API interna JSON
+//    /api/v2/catalog/items (come Subito con Hades). Vinted però richiede un
+//    cookie di sessione anonimo: lo prendo con una GET iniziale alla home e
+//    riuso il set-cookie. Se l'API fallisce, ripiego sul vecchio scraping HTML.
+let _vintedCookie = null, _vintedCookieAt = 0;
+async function getVintedCookie() {
+  // riuso il cookie per 20 min: evita una GET home a ogni query
+  if (_vintedCookie && (Date.now() - _vintedCookieAt) < 20*60*1000) return _vintedCookie;
+  try {
+    const r = await axios.get('https://www.vinted.it/', {
+      headers:{ 'User-Agent':rUA(), 'Accept-Language':'it-IT', 'Accept':'text/html' },
+      timeout:12000, maxRedirects:5,
+    });
+    const setC = r.headers['set-cookie'] || [];
+    // tengo solo i cookie utili (access_token_web + anon_id + session)
+    const jar = setC.map(c => c.split(';')[0]).join('; ');
+    if (jar) { _vintedCookie = jar; _vintedCookieAt = Date.now(); return jar; }
+  } catch (e) { console.warn('[Vinted cookie]', e.response?.status||e.code||e.message); }
+  return null;
+}
+async function searchVintedJSON(query) {
+  const cookie = await getVintedCookie();
+  if (!cookie) throw new Error('no-cookie');
+  await sleep(400 + Math.random()*400);
+  const r = await axios.get('https://www.vinted.it/api/v2/catalog/items', {
+    params: {
+      search_text: query, catalog_ids: 2165, // 2165 = orologi
+      order: 'newest_first', price_from: SCAN_FLOOR, currency: 'EUR', per_page: 30,
+    },
+    headers: {
+      'User-Agent': rUA(), 'Accept': 'application/json',
+      'Accept-Language': 'it-IT,it;q=0.9', 'Cookie': cookie,
+      'Referer': 'https://www.vinted.it/catalog?catalog[]=2165',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    timeout: 12000,
+  });
+  const items = Array.isArray(r.data?.items) ? r.data.items : [];
+  const out = [];
+  for (const it of items.slice(0, 15)) {
+    const title = it.title || '';
+    // il prezzo Vinted può stare in price.amount (stringa) o total_item_price
+    const rawP = it.price?.amount ?? it.total_item_price?.amount ?? it.price ?? 0;
+    const price = parsePrice(String(rawP));
+    const url = it.url || (it.id ? `https://www.vinted.it/items/${it.id}` : '');
+    if (title && price >= SCAN_FLOOR && url) {
+      out.push({ platform:'Vinted 🇮🇹', title, price, currency:'EUR', url });
+    }
+  }
+  return out;
+}
 async function searchVinted(query) {
+  // ── 1) API INTERNA JSON: affidabile, i dati ci sono sul serio ──
+  try {
+    const j = await searchVintedJSON(query);
+    if (j.length) { console.log(`[Vinted API] ${query}: ${j.length}`); return j; }
+    console.warn(`[Vinted API] ${query}: 0 → ripiego su HTML`);
+  } catch (e) { console.warn(`[Vinted API] ${query}: ${e.response?.status||e.code||e.message} → ripiego su HTML`); }
+
+  // ── 2) FALLBACK: vecchio scraping HTML (spesso vuoto, ma non costa nulla) ──
   try {
     await sleep(900+Math.random()*500);
     const r = await axios.get(`https://www.vinted.it/catalog?search_text=${encodeURIComponent(query)}&catalog[]=2165&price_from=${SCAN_FLOOR}`, {
@@ -1231,6 +1296,8 @@ async function searchVinted(query) {
       if (title&&price>=SCAN_FLOOR) results.push({ platform:'Vinted 🇮🇹', title, price, currency:'EUR',
         url:link?(link.startsWith('http')?link:`https://www.vinted.it${link}`):'https://www.vinted.it' });
     });
+    if (results.length) console.log(`[Vinted HTML] ${query}: ${results.length}`);
+    else console.warn(`[Vinted] ${query}: 0 (API e HTML entrambi vuoti)`);
     return results;
   } catch(e) { console.error('[Vinted]',e.message); return []; }
 }
@@ -1265,19 +1332,6 @@ async function searchRicardo(query) {
     });
     return results;
   } catch(e) { console.error('[Ricardo]',e.message); return []; }
-}
-async function searchMarktplaats(query) {
-  query = adaptQueryForMarket(query, 'nl');
-  try {
-    await sleep(1000+Math.random()*500);
-    const r = await axios.get(`https://www.marktplaats.nl/lrp/api/search?query=${encodeURIComponent(query)}&categoryId=363&priceFrom=200&sortBy=PRICE_ASC&limit=12`, { headers:{'User-Agent':rUA(),'Accept':'application/json'}, timeout:12000 });
-    const listings = r.data?.listings || [];
-    return listings.slice(0,12).map(i=>({
-      platform:'Marktplaats 🇳🇱', title:i.title||'',
-      price:parseFloat(i.priceInfo?.priceCents||0)/100, currency:'EUR',
-      url:i.vipUrl?`https://www.marktplaats.nl${i.vipUrl}`:'https://www.marktplaats.nl', location:i.location?.cityName||'',
-    })).filter(i=>i.price>=SCAN_FLOOR&&i.title);
-  } catch(e) { console.error('[Marktplaats]',e.message); return []; }
 }
 // ── ADATTATORE LINGUA QUERY (v12.25, 06/07/26): le query nascono in italiano,
 //    ma OLX.pl cercato con "orologio oro" restituisce ZERO — i polacchi
@@ -1575,10 +1629,10 @@ const setCache = (k,d) => cache.set(k,{d,ts:Date.now()});
 async function searchAll(query) {
   const gold = await getGoldPrice();
   const platinum = await getPlatinumPrice();
-  const [ebay, chrono, catawiki, subito, leboncoin, vestiaire, watchfinder, vinted, wallapop, ricardo, marktplaats, olxpl, olxro, allegro, sprzed, okazii, mlmx, mlbr, serp, serpLocal, fb] = await Promise.allSettled([
+  const [ebay, chrono, catawiki, subito, leboncoin, vestiaire, watchfinder, vinted, wallapop, ricardo, olxpl, olxro, allegro, sprzed, okazii, mlmx, mlbr, serp, serpLocal, fb] = await Promise.allSettled([
     searchEbayAllCountries(query), searchChrono24RSS(query), searchCatawiki(query), searchSubito(query),
     searchLeboncoin(query), searchVestiaire(query), searchWatchfinder(query), searchVinted(query),
-    searchWallapop(query), searchRicardo(query), searchMarktplaats(query), searchOlxPl(query), searchOlxRo(query),
+    searchWallapop(query), searchRicardo(query), searchOlxPl(query), searchOlxRo(query),
     searchAllegroPl(query), searchSprzedajemyPl(query), searchOkaziiRo(query),
     searchMercadoLibreMX(query), searchMercadoLibreBR(query),
     searchSerpAPI(query, 'it'), searchSerpAPILocal(query), searchFacebook(query),
@@ -1589,7 +1643,7 @@ async function searchAll(query) {
     ...(leboncoin.status==='fulfilled'?leboncoin.value:[]), ...(vestiaire.status==='fulfilled'?vestiaire.value:[]),
     ...(watchfinder.status==='fulfilled'?watchfinder.value:[]), ...(vinted.status==='fulfilled'?vinted.value:[]),
     ...(wallapop.status==='fulfilled'?wallapop.value:[]), ...(ricardo.status==='fulfilled'?ricardo.value:[]),
-    ...(marktplaats.status==='fulfilled'?marktplaats.value:[]), ...(olxpl.status==='fulfilled'?olxpl.value:[]),
+    ...(olxpl.status==='fulfilled'?olxpl.value:[]),
     ...(olxro.status==='fulfilled'?olxro.value:[]), ...(allegro.status==='fulfilled'?allegro.value:[]),
     ...(sprzed.status==='fulfilled'?sprzed.value:[]), ...(okazii.status==='fulfilled'?okazii.value:[]),
     ...(mlmx.status==='fulfilled'?mlmx.value:[]), ...(mlbr.status==='fulfilled'?mlbr.value:[]),
@@ -1602,7 +1656,7 @@ async function searchAll(query) {
   const _diag = {
     eBay:_cnt(ebay), Chrono24:_cnt(chrono), Catawiki:_cnt(catawiki), Subito:_cnt(subito),
     Leboncoin:_cnt(leboncoin), Vinted:_cnt(vinted), Wallapop:_cnt(wallapop), Ricardo:_cnt(ricardo),
-    Marktplaats:_cnt(marktplaats), 'OLX.pl':_cnt(olxpl), 'OLX.ro':_cnt(olxro), Allegro:_cnt(allegro),
+    'OLX.pl':_cnt(olxpl), 'OLX.ro':_cnt(olxro), Allegro:_cnt(allegro),
     Sprzedajemy:_cnt(sprzed), Okazii:_cnt(okazii), 'ML.mx':_cnt(mlmx), 'ML.br':_cnt(mlbr), FB:_cnt(fb)
   };
   console.error(`[SCRAPER] "${query}" →`, JSON.stringify(_diag));
@@ -1673,6 +1727,44 @@ const QUERIES_BLOCK_H_GREZZI = [
   // Spagna / internazionale
   'reloj oro 18k antiguo', 'solid gold watch 18k manual wind',
 ];
+// ── BLOCCO I — QUERY LARGHE per eBay/Subito/Vinted (agg. 07/07/26) ──────────
+//    Problema risolto: A–H sono query iper-specifiche (nomi di modelli rari).
+//    Su eBay IT, Subito e Vinted — mercati generalisti italiani — quei pezzi
+//    non compaiono quasi mai → "quasi zero risultati". Queste query larghe
+//    pescano il flusso quotidiano di cronografi e orologi vintage comuni, così
+//    quei tre canali tornano a rendere. Il gate di tesi + l'AI filtrano dopo:
+//    query larga NON significa alert su robaccia, significa più materia prima
+//    da scremare. Volutamente generiche ma non troppo (niente "orologio" secco
+//    che porterebbe Casio e Swatch a valanga). ──
+const QUERIES_BLOCK_I_LARGHE = [
+  'cronografo vintage carica manuale', 'cronografo Valjoux vintage',
+  'cronografo Landeron vintage', 'orologio svizzero vintage anni 60',
+  'orologio automatico vintage acciaio', 'cronografo Venus vintage',
+  'orologio vintage oro placcato cronografo', 'orologio subacqueo vintage',
+  'orologio militare vintage', 'cronografo bicompax vintage',
+  'orologio carica manuale anni 50', 'orologio Swiss made vintage uomo',
+];
+// ── BLOCCO J — CACCIATORE DI ERRORI (v12.30, 07/07/26) ──────────────────────
+//    Il vantaggio: gli affari migliori stanno negli annunci SCRITTI MALE.
+//    Chi scrive "Vacheron Costantin" o "Longine" non sa cosa ha in mano — e
+//    NESSUN bot lo trova, perché tutti cercano il nome giusto. Queste query
+//    cercano apposta gli errori di battitura più comuni sui marchi nobili,
+//    più le "categorie sbagliate" (orologi firmati venduti come rottame oro).
+//    Multilingua: l'edge sta nel farlo su 7 mercati, non solo in Italia.
+//    NB: "Zenit" pesca anche i russi Zenit — il gate di tesi poi filtra. ──
+const QUERIES_BLOCK_J_ERRORI = [
+  // Italia — errori di battitura sui marchi nobili
+  'orologio Vacheron Costantin', 'orologio Longine oro', 'Jeager LeCoultre',
+  'Audemar Piguet vintage', 'Girard Perregeaux', 'orologio Zenit oro vintage',
+  'Patek Phillipe vintage', 'Eberard cronografo', 'IWC Shaffhausen',
+  // Germania — errori fonetici tedeschi
+  'Vacheron Konstantin uhr', 'uhr Schafhausen gold',
+  // Francia
+  'montre Vacheron Constantine',
+  // Categorie sbagliate — orologi firmati venduti come rottame/peso
+  'orologio oro da rottamare', 'oro usato orologio 750',
+  'lotto orologi eredit\u00e0', 'stock orologi vecchi',
+];
 // BLOCCO G — le query ENCICLOPEDICHE generate dalla watchlist (vedi encyclopedicQueries.js).
 const QUERIES_G_CORE = ['Wittnauer Valjoux 72 cronografo','Excelsior Park 40 cronografo','Enicar Sherpa Graph','Gallet Multichron 12','Universal Geneve Compax'];
 // Il pool si COSTRUISCE dall'Enciclopedia: marchi+modelli+calibri precisi e
@@ -1721,9 +1813,14 @@ function getGoldQueries() {
   //    ignaro" non esistevano. Ora G_MELT + H_GREZZI entrano in OGNI scan;
   //    i blocchi collezionismo (crono/diver, fuori tesi melt per definizione)
   //    ruotano come contorno: 1 blocco di giorno, 2 di notte. ──
+  // ── BLOCCO J a finestra rotante: 8 query-errore per scan (metà del blocco,
+  //    alternate a ogni tick) — copre tutto il blocco ogni 2 ore senza
+  //    gonfiare il carico AI. ──
+  const _jOff = (tick % 2) * 8;
+  const jRot = QUERIES_BLOCK_J_ERRORI.slice(_jOff, _jOff + 8);
   const themed = night
-    ? [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...rotating[tick % rotating.length], ...rotating[(tick+3) % rotating.length]]
-    : [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...rotating[tick % rotating.length]];
+    ? [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...QUERIES_BLOCK_I_LARGHE, ...jRot, ...rotating[tick % rotating.length], ...rotating[(tick+3) % rotating.length]]
+    : [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...QUERIES_BLOCK_I_LARGHE, ...jRot, ...rotating[tick % rotating.length]];
   // Finestra scorrevole sul pool enciclopedico: di NOTTE 30 query, di GIORNO 15.
   // Così la notte copre tutto il pool in pochi cicli e al mattino è tutto battuto.
   const N = night ? 30 : 15;
@@ -1783,7 +1880,7 @@ async function runGoldScan(mode = 'all') {
       // Spina dorsale = API UFFICIALE eBay (searchEbayAllCountries: usa l'API
       // Browse gratuita e copre IT/FR/DE/GB/ES in una sola chiamata, e ripiega
       // sullo scraping solo se manca il token). Niente più SerpAPI a pagamento
-      // nelle scansioni. Gli scraper (Subito, Chrono24, Marktplaats, Vinted)
+      // nelle scansioni. Gli scraper (Subito, Chrono24, Vinted)
       // restano come BONUS: se il sito è raggiungibile portano roba, se è
       // bloccato non costa nulla. L'oro (calcolo puro) gira su tutto ciò che entra.
       const sources = geoMarket
@@ -1791,7 +1888,7 @@ async function runGoldScan(mode = 'all') {
             geoMarket === 'it'
               ? [ searchSubito, searchEbayAllCountries ]            // esteri pescati anche in IT
               : geoMarket === 'de'
-                ? [ searchMarktplaats, searchEbayAllCountries ]     // italiani/FR pescati in DE
+                ? [ searchChrono24RSS, searchEbayAllCountries ]     // italiani/FR pescati in DE
                 : [ searchChrono24RSS, searchEbayAllCountries, searchOlxPl, searchOlxRo ] // JP/US/Est in EU
           )
         : mode === 'subito'
@@ -1806,7 +1903,6 @@ async function runGoldScan(mode = 'all') {
               searchEbayAllCountries, // eBay ufficiale IT/FR/DE/GB/ES — GRATIS
               searchSubito,           // 🇮🇹
               searchChrono24RSS,
-              searchMarktplaats,      // 🇳🇱
               searchVinted,
               searchLeboncoin,        // 🇫🇷
               searchWallapop,         // 🇪🇸
@@ -1871,6 +1967,13 @@ async function runGoldScan(mode = 'all') {
         }
         trace('2.passa-filtri-categoria');
 
+        // ── MEMORIA PREZZI + PRESSIONE VENDITORE (v12.30): registro OGNI
+        //    annuncio valido (raccolta dati proprietaria: ribassi, ricomparse,
+        //    anzianità). La riga _desp entra negli alert solo con punteggio ≥4. ──
+        try { desperation.observe({ title: item.title, description: item.description, price: priceEur, url: nu }); } catch {}
+        let _desp = '';
+        try { _desp = desperation.telegramLine({ title: item.title, description: item.description, price: priceEur }); } catch {}
+
         // ── OSSERVATI: un pezzo che segui è ricomparso sotto soglia? ──
         try { await checkObservedMatch(item, priceEur); } catch {}
 
@@ -1909,6 +2012,7 @@ async function runGoldScan(mode = 'all') {
                   ? `\n\u{1F3C6} <b>NON \u00E8 un pezzo da fuso:</b> questa referenza/calibro (321 e famiglia) vale MULTIPLI del metallo. L'oro qui \u00E8 solo il PAVIMENTO di sicurezza: confronta coi VENDUTI da collezione prima di offrire \u2014 se il prezzo \u00E8 vicino al metallo, \u00E8 un affare che urla.\n`
                   : (compraSubito ? `\n\u{1F512} <b>Acquisto sicuro:</b> paghi quanto vale il metallo, e l'oro storicamente sale nel lungo periodo.\n` : `\n\u{1F3AF} <b>Tratta.</b> Offri ~\u20AC${offerta.toLocaleString('it-IT')}: guadagno \u20AC${guadagnoSeOfferta.toLocaleString('it-IT')} garantito dal metallo.\n`))+
                 meltScarcityHint(item.title)+
+                _desp+
                 `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
                 `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
                 feedbackLinks(null, item.url, item.title, priceEur)
@@ -1930,6 +2034,7 @@ async function runGoldScan(mode = 'all') {
                 `\u{1F4B0} Vale come oro: <b>\u20AC${metal.valueLow.toLocaleString('it-IT')}\u2013\u20AC${metal.valueHigh.toLocaleString('it-IT')}</b>\n`+
                 `\u2705 Anche col peso MINIMO l'oro vale \u20AC${metal.safeFloor.toLocaleString('it-IT')}: paghi meno \u2192 coperto.\n`+
                 `\u26A0\uFE0F Conferma punzone e peso col venditore (foto fondello + caratura).\n`+
+                _desp+
                 `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
                 `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
                 feedbackLinks(null, item.url, item.title, priceEur)
@@ -2030,6 +2135,7 @@ async function runGoldScan(mode = 'all') {
                 `\u{1F4B0} Chiede: <b>\u20AC${priceEur.toLocaleString('it-IT')}</b>\n`+
                 (ai.valueLow?`\u{1F4CA} Stima (NON confermata): \u20AC${Number(ai.valueLow).toLocaleString('it-IT')}\u2013\u20AC${Number(ai.valueHigh||ai.valueLow).toLocaleString('it-IT')}\n`:'')+
                 `\n\u26A0\uFE0F <b>Lo sconto mostrato potrebbe essere falso:</b> la stima potrebbe riferirsi a un modello pi\u00F9 pregiato della stessa famiglia. Verifica la <b>referenza</b> e il <b>calibro</b> esatti prima di trattare.\n`+
+                _desp+
                 `\n\u{1F4A1} ${ai.reasoning||''}\n`+
                 `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
                 `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
@@ -2050,6 +2156,7 @@ async function runGoldScan(mode = 'all') {
                 (ai.marketCycleLine?`${ai.marketCycleLine}\n`:'')+
                 (ai.sellerClueless?`\u{1F3AF} <b>Il venditore sembra non sapere cosa ha!</b>\n`:'')+
                 `\n\u26A0\uFE0F <b>Valore non stimabile dal solo titolo.</b> Prezzo basso + segnali di qualit\u00E0: \u00E8 il tipo di grezzo dove nasce il flip. Chiedi foto movimento + fondello e valuta di persona.\n`+
+                _desp+
                 `\n\u{1F4A1} ${ai.reasoning||''}\n`+
                 `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
                 `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
@@ -2105,7 +2212,8 @@ async function runGoldScan(mode = 'all') {
                 soldLine+
                 ((()=>{ try { return dealEngine.buildInsightLines({ brand:ai.brand, model:ai.model, priceEur, marginEur:ai.marginEur, evRating:ai.evRating, sleeperTier:ai.sleeperTier }).lines || ''; } catch { return ''; } })())+
                 `\n\u{1F9E0} ${ai.investmentReasons||ai.reasoning||'Fondamentali solidi: motore nobile, marchio in salita, originale.'}\n`+
-                `\u{1F4A1} <b>Tesi:</b> non \u00E8 un flip-margine, \u00E8 un pezzo da TENERE. Il downside \u00E8 protetto, l'upside arriva col catalizzatore (rilancio marchio, riedizione, asta, anniversario). Accumula e holda finch\u00E9 i fondamentali reggono.\n\n`+
+                `\u{1F4A1} <b>Tesi:</b> non \u00E8 un flip-margine, \u00E8 un pezzo da TENERE. Il downside \u00E8 protetto, l'upside arriva col catalizzatore (rilancio marchio, riedizione, asta, anniversario). Accumula e holda finch\u00E9 i fondamentali reggono.\n`+
+                _desp+`\n`+
                 `<a href=\"${item.url}\">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
                 feedbackLinks(ai.brand, item.url, item.title, priceEur)
               );
@@ -2130,7 +2238,8 @@ async function runGoldScan(mode = 'all') {
                 (ai.valueLow?` \u00B7 mercato \u20AC${ai.valueLow.toLocaleString('it-IT')}\u2013\u20AC${(ai.valueHigh||ai.valueLow).toLocaleString('it-IT')}`:'')+`\n`+
                 (ai.evRating?`\u{1F4CA} Potenziale 3-5 anni: <b>${ai.evRating==='high'?'ALTO \u{1F525}':ai.evRating==='medium'?'medio':'basso'}</b>\n`:'')+
                 (stars?`${stars} Desiderabilita ${ai.desirability}/10\n`:'')+
-                `\n\u{1F4A1} Non \u00E8 un affare-flip: prezzo in linea col mercato. Te lo mostro per studiarlo \u2014 calibro, varianti, quotazioni. ${ai.investmentReasons||ai.reasoning||''}\n\n`+
+                `\n\u{1F4A1} Non \u00E8 un affare-flip: prezzo in linea col mercato. Te lo mostro per studiarlo \u2014 calibro, varianti, quotazioni. ${ai.investmentReasons||ai.reasoning||''}\n`+
+                _desp+`\n`+
                 `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
                 feedbackLinks(ai.brand, item.url, item.title, priceEur)
               );
@@ -2240,6 +2349,7 @@ async function runGoldScan(mode = 'all') {
               })():'')+
               `${confLabel}\n${photoLabel}\n`+
               (ai.redFlags&&ai.redFlags!=='null'?`\u{1F6A9} <b>Attenzione:</b> ${ai.redFlags}\n`:'')+
+              _desp+
               `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
               `\u{1F4A1} ${ai.reasoning||''}\n\n`+
               `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
@@ -2268,7 +2378,8 @@ async function runGoldScan(mode = 'all') {
             (vintage.discountVsLow>0?`\u{1F4C9} <b>\u2212${vintage.discountVsLow}% sotto il minimo</b>\n`:'')+
             `${stars} Desiderabilita ${vintage.desirability}/10\n`+
             `\u{1F3EA} ${item.platform}${item.location?` \u00B7 \u{1F4CD} ${item.location}`:''}\n\n`+
-            `\u{1F4A1} ${vintage.note}\n\n`+
+            `\u{1F4A1} ${vintage.note}\n`+
+            _desp+`\n`+
             `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
             feedbackLinks(vintage.brand, item.url, item.title, priceEur)
           );
@@ -2382,7 +2493,15 @@ async function runDiscoveryScan() {
 }
 
 // ══════════════ API ROUTES ══════════════
-app.get('/api/versione', (req, res) => res.json({ versione: '12.21', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','Marktplaats','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'] }));
+app.get('/api/versione', (req, res) => res.json({ versione: '12.30', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'], canali_freddi: ['PVP giudiziario IT','Zoll-Auktion DE'], memoria_pressione: desperation.statsSummary() }));
+// ── Diagnostica canali freddi: chiamala a mano per vedere cosa rendono
+//    PVP e Zoll SENZA aspettare il giro delle 12h. La diag dice per ogni
+//    strato (api/html) status e lunghezza risposta: se un selettore va
+//    ritoccato, si vede qui. ──
+app.get('/api/coldauctions', async (req, res) => {
+  try { res.json(await coldAuctions.scanAll({ maxPerSource: 15 })); }
+  catch (e) { res.status(500).json({ err: e.message }); }
+});
 
 app.get('/api/diagnostica', async (req, res) => {
   const q = (req.query.q || 'omega').toString();
@@ -2395,7 +2514,6 @@ app.get('/api/diagnostica', async (req, res) => {
     'Leboncoin': searchLeboncoin,
     'Wallapop': searchWallapop,
     'Ricardo.ch': searchRicardo,
-    'Marktplaats': searchMarktplaats,
     'OLX.pl': searchOlxPl,
     'OLX.ro': searchOlxRo,
     'Allegro.pl': searchAllegroPl,
@@ -2815,67 +2933,6 @@ async function fetchSubitoCieco(query, maxPrice) {
   } catch (e) { console.error('[flip cieco Subito]', e.message); return []; }
 }
 
-// Estrae l'URL immagine da un listing Marktplaats SENZA dipendere dal nome
-// esatto del campo: l'API a volte usa pictures[].largeUrl, a volte imageUrls[],
-// a volte altro. Cerco in profondità qualunque stringa che sia un URL d'immagine
-// (o un id immagine Marktplaats) e la normalizzo. Così funziona comunque.
-function mpImageUrl(i) {
-  let found = '';
-  const isImg = (s) => typeof s === 'string' &&
-    (/\.(jpe?g|png|webp)(\?|$)/i.test(s) || /image|img|media|pictures?/i.test(s)) &&
-    /^(https?:)?\/\//i.test(s);
-  const walk = (v, depth) => {
-    if (found || depth > 5 || v == null) return;
-    if (typeof v === 'string') { if (isImg(v)) found = v; return; }
-    if (Array.isArray(v)) { for (const x of v) { walk(x, depth+1); if (found) return; } return; }
-    if (typeof v === 'object') { for (const k of Object.keys(v)) { walk(v[k], depth+1); if (found) return; } }
-  };
-  walk(i, 0);
-  // alcuni feed danno solo un id/percorso senza schema: provo a ricostruirlo
-  if (!found) {
-    const raw = i?.pictures?.[0];
-    const cand = (raw && (raw.largeUrl || raw.url || raw.mediaId)) || i?.imageUrls?.[0] || '';
-    if (cand) found = String(cand);
-  }
-  if (found && found.startsWith('//')) found = 'https:' + found;
-  return found || '';
-}
-
-// Rete di sicurezza: se l'API non espone l'immagine, la prendo dalla pagina
-// dell'annuncio (meta og:image). In produzione su Render marktplaats è
-// raggiungibile, quindi questo garantisce l'immagine quasi sempre.
-async function fetchOgImage(pageUrl) {
-  try {
-    const r = await axios.get(pageUrl, { headers:{ 'User-Agent':rUA(), 'Accept':'text/html' }, timeout:10000 });
-    const html = String(r.data || '');
-    const m = html.match(/<meta[^>]+(?:property|name)=["']og:image["'][^>]+content=["']([^"']+)["']/i)
-           || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["']/i);
-    return m ? m[1] : '';
-  } catch { return ''; }
-}
-
-async function fetchMarktplaatsCieco(query, maxPrice) {
-  try {
-    await sleep(600 + Math.random()*500);
-    const r = await axios.get(`https://www.marktplaats.nl/lrp/api/search?query=${encodeURIComponent(query)}&categoryId=363&sortBy=PRICE_ASC&limit=40`,
-      { headers:{ 'User-Agent':rUA(), 'Accept':'application/json' }, timeout:12000 });
-    const listings = r.data?.listings || [];
-    const out = [];
-    let ogFetches = 0;
-    for (const i of listings) {
-      const title = i.title || '';
-      const price = Math.round(parseFloat(i.priceInfo?.priceCents || 0) / 100);
-      const url = i.vipUrl ? `https://www.marktplaats.nl${i.vipUrl}` : '';
-      if (!title || !url || price < CIECO_FLOOR || price > maxPrice) continue;
-      let imageUrl = mpImageUrl(i);
-      // fallback og:image solo per gli item validi senza immagine, max 15/query
-      if (!imageUrl && ogFetches < 15) { ogFetches++; imageUrl = await fetchOgImage(url); }
-      out.push({ id:'mp:'+(i.itemId||i.vipUrl||url), title, description:(i.description||''), price, currency:'EUR', imageUrl, url, source:'Marktplaats 🇳🇱' });
-    }
-    return out;
-  } catch (e) { console.error('[flip cieco Marktplaats]', e.message); return []; }
-}
-
 async function runFlipCiecoScan() {
   if (!process.env.GROQ_API_KEY) { console.warn('[flip cieco] GROQ_API_KEY mancante: salto (serve la vision).'); return { gemme:0 }; }
   const max = genericQueries.FLIP_CIECO_MAX;
@@ -2888,7 +2945,6 @@ async function runFlipCiecoScan() {
   for (const q of Q.ebay_de)  grezzo = grezzo.concat(await fetchEbayCieco(q, look, ['EBAY_DE']));
   for (const q of Q.ebay_fr)  grezzo = grezzo.concat(await fetchEbayCieco(q, look, ['EBAY_FR']));
   for (const q of (Q.ebay_es||[])) grezzo = grezzo.concat(await fetchEbayCieco(q, look, ['EBAY_ES']));
-  for (const q of (Q.marktplaats||[])) grezzo = grezzo.concat(await fetchMarktplaatsCieco(q, look));
 
   const byId = new Map(); for (const l of grezzo) if (l && l.id && !byId.has(l.id)) byId.set(l.id, l);
   const fresh = [...byId.values()].filter(l => !alreadyAlerted(listingFp(l.title, l.price)));
@@ -3034,8 +3090,14 @@ if (process.env.STARTUP_ENGINE_TEST !== 'false') {
             ? `💾 Memoria scarti: ✅ Gist attivo — ${db.dismissedFps.length} scarti ricordati`
             : `💾 Memoria scarti: ⚠️ Gist configurato ma NON caricato${gistLastError ? ` (${String(gistLastError).replace(/[<>&]/g, '')})` : ''} → gli scarti possono tornare`)
         : `💾 Memoria scarti: ❌ NON configurata — mancano GIST_ID + GITHUB_TOKEN su Render → scarti e anti-ripetizione MUOIONO a ogni riavvio (è il motivo per cui i pezzi scartati tornano)`;
+      // ── Canali freddi: raggiungibilità PVP + Zoll (v12.30) ──
+      let cold = '';
+      try {
+        const c = await coldAuctions.autotest();
+        cold = `\n🧊 Canali freddi: PVP ${c.pvp && c.pvp.ok ? '✅' : `❌ (${(c.pvp && (c.pvp.status || c.pvp.err)) || '?'})`} · Zoll ${c.zoll && c.zoll.ok ? '✅' : `❌ (${(c.zoll && (c.zoll.status || c.zoll.err)) || '?'})`}`;
+      } catch {}
       await tg(
-        `🔧 <b>Autotest motori all'avvio</b> (v12.29)\n\n${righe}\n\n${mem}\n\n` +
+        `🔧 <b>Autotest motori all'avvio</b> (v12.30)\n\n${righe}\n\n${mem}${cold}\n\n` +
         (disponibili
           ? (tutti ? '✅ Tutto il configurato funziona: il bot analizza.' : '⚠️ Qualcosa fallisce: leggi l\'errore qui sopra, dice già la causa.')
           : '🛑 NESSUN motore funziona: il bot raccoglie ma non analizza. L\'errore sopra dice perché.')
@@ -3158,4 +3220,24 @@ app.listen(PORT,'0.0.0.0',async()=>{
   };
   setTimeout(runAhciCheck, 180000);
   setInterval(runAhciCheck, 24*3600000);
+
+  // ── CANALI FREDDI (v12.30): aste giudiziarie PVP + dogana Zoll-Auktion.
+  //    Canali lenti per natura (le aste durano settimane): un giro ogni 12h
+  //    basta e avanza. Dedup con l'anti-ripetizione esistente (impronta
+  //    'cold:'+url, cooldown 14gg — su un'asta ancora aperta il re-alert
+  //    dopo 2 settimane funziona da promemoria, non da rumore). ──
+  const runColdAuctionsScan = async () => {
+    try {
+      const { items, diag } = await coldAuctions.scanAll({ maxPerSource: 15 });
+      console.log('[COLD] diag:', JSON.stringify(diag).slice(0, 500));
+      const fresh = items.filter(it => !alreadyAlerted('cold:' + (it.url || it.title)));
+      if (!fresh.length) { console.log(`[COLD] trovati ${items.length}, nessun lotto NUOVO da segnalare`); return; }
+      await tg(coldAuctions.formatTelegram(fresh.slice(0, 20)));
+      for (const it of fresh) markAlerted('cold:' + (it.url || it.title));
+      saveState();
+      console.log(`[COLD] segnalati ${fresh.length} lotti nuovi`);
+    } catch (e) { console.error('[COLD]', e.message); }
+  };
+  setTimeout(runColdAuctionsScan, 240000);      // primo giro 4 min dopo l'avvio
+  setInterval(runColdAuctionsScan, 12*3600000); // poi ogni 12 ore
 });
