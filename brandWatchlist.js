@@ -91,6 +91,15 @@ const watchlist = [
   { brand: 'Vacheron Constantin', model: 'Chronometer Royal (cal. 1007/1008)', caliber: '1007/1008', maxBuy: 6500, note: 'GRAIL dei solo-tempo VC: Sigillo Ginevra + COSC + hacking, 19 rubini. Raro e in ascesa: se compare sotto 6.500 e coerente, e caccia grossa. Chiedere foto movimento con stampigliatura BS' },
   { brand: 'Vacheron Constantin', model: 'ultra-piatto cal. K1003 / auto cal. 1120 oro', caliber: 'K1003/1120', maxBuy: 5000, note: '1003 = manuale piu sottile di sempre (1,64mm), ancora in produzione: il vintage e sottovalutato vs Historiques moderno da 26.900 sterline. 1120 = base JLC 920, la STESSA di Royal Oak (AP 2120) e Nautilus (PP 28-255): argomento di rivendita fortissimo' },
 
+  // -- CALIBRI MAISON UNIFICATI: OMEGA / JLC / AP (agg. 07/07/26) ---------------
+  //    Gemelli della sezione VC, coperti dal modulo maisonCalibers.js.
+  //    La voce Omega 321 CHIUDE il fix misclassificazione: quelle ref non
+  //    sono MAI pezzi da fuso.
+  { brand: 'Omega', model: 'crono famiglia cal. 321 (ref. 2279/2439/2451/2468/2884)', caliber: '321', maxBuy: 6000, note: 'MAI MELT (fix 07/07): colonne, calibro della Luna pre-68. In oro = doppio pavimento (metallo + collezione). Seamaster crono oro mercato 4.000-12.000. Verificare movimento lato pulsanti (colonne vere)' },
+  { brand: 'Omega', model: 'solo-tempo 30T2 / serie 26x ORO 18k', caliber: '30T2/265/266/267/283/286', maxBuy: 1400, note: 'Il value assoluto: manuale da osservatorio anni 40-50. Oro mercato 800-1.800: sotto 1.400 = margine o hold protetto. In acciaio 400-900 = entry. Occhio 14k USA prefisso N- (fuori tesi) e gold-capped' },
+  { brand: 'Jaeger-LeCoultre', model: 'Memovox auto / Futurematic 497 / dress oro 849-450', caliber: '825/K911/K916/497/849/450', maxBuy: 2200, note: 'Memovox 1.500-3.500 (825 e K911/916 > bumper 815) · Futurematic 1.200-2.500 · dress oro 18k = melt + finezza. TRAPPOLE: ref 111.x = spesso QUARZO serie 600; "LeCoultre" senza Jaeger = mercato USA, cassa spesso 14k/gold-filled: chiedere macro del punzone' },
+  { brand: 'Audemars Piguet', model: 'dress oro cal. 2003 / pre-Royal Oak time-only', caliber: '2003/2120', maxBuy: 5000, note: 'Cal. 2003 = gemello del VC K1003 (progetto congiunto). Dealer 4.500-8.000; 5043 full set 5.000-6.500 (certificato ORFANO = red flag). Time-only anni 60 a 3.500-7.000 = sottovalutati vs blasone. Se compare un crono VZAS mal catalogato = AVVISARE SUBITO (sei cifre). Extract AP sopra i 5.000' },
+
   // -- BREITLING CHRONOMAT ROULEAUX (agg. 03/07/26, richiesta Leonardo) --------
   //    Vintage anni 80-90 (nato 1984 dopo Frecce Tricolori 83; bracciale rouleaux/bullet
   //    discontinuato 2000). Leonardo: piace bicolore coi rider tabs ORO. Strategia

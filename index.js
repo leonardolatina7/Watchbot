@@ -87,7 +87,7 @@ function safeRequire(path, fallback) {
   catch (e) { console.error(`[safeRequire] modulo ${path} NON caricato:`, e.message); return fallback; }
 }
 const longines = safeRequire('./longinesCalibers', { longinesLine: () => '', analyzeLongines: () => ({ isLongines:false }) });
-const vacheron = safeRequire('./vacheronCalibers', { vacheronLine: () => '', analyzeVacheron: () => ({ isVacheron:false }) }); // ── CALIBRI VC (v12.30): gerarchia 1007>K1001>453, trappola 1040, coerenza secondi ──
+const maison = safeRequire('./maisonCalibers', { maisonLine: () => '' }); // ── CALIBRI MAISON UNIFICATI (v12.31): VC+JLC+AP+Omega in un modulo solo, trappole incluse ──
 const trademarkRadar = require('./trademarkRadar');
 const awardsRadar = require('./awardsRadar');
 const soldComps = require('./soldComps');
@@ -2198,7 +2198,7 @@ async function runGoldScan(mode = 'all') {
                 (ai.caliber&&ai.caliber!=='null'?`\u2699\uFE0F ${ai.caliber}${ai.qualityMovement?' \u2728':''}\n`:'')+
                 (caliberDb.caliberLine(item.title)?caliberDb.caliberLine(item.title)+'\n':'')+
                 (longines.longinesLine(item.title)?longines.longinesLine(item.title)+'\n':'')+
-                (vacheron.vacheronLine(item.title)?vacheron.vacheronLine(item.title)+'\n':'')+
+                (maison.maisonLine(item.title)?maison.maisonLine(item.title)+'\n':'')+
                 (bw?`\u{1F4CC} <b>In watchlist:</b> ${bw.note}${bw.maxBuy?` (max \u20AC${bw.maxBuy})`:''}\n`:'')+
                 `\n\u{1F4CA} <b>Punteggio investitore: ${ai.investorScore}/10</b>\n`+
                 (ai.marketCycleLine?`${ai.marketCycleLine}\n`:'')+
@@ -2325,7 +2325,7 @@ async function runGoldScan(mode = 'all') {
               (ai.caliber&&ai.caliber!=='null'?`\u2699\uFE0F ${ai.caliber}${ai.qualityMovement?' \u2728':''}\n`:'')+
               (caliberDb.caliberLine(item.title)?caliberDb.caliberLine(item.title)+'\n':'')+
                 (longines.longinesLine(item.title)?longines.longinesLine(item.title)+'\n':'')+
-              (vacheron.vacheronLine(item.title)?vacheron.vacheronLine(item.title)+'\n':'')+
+              (maison.maisonLine(item.title)?maison.maisonLine(item.title)+'\n':'')+
               (bw?`\u{1F4C8} <b>In watchlist:</b> ${bw.note}${bw.maxBuy?` (max \u20AC${bw.maxBuy})`:''}\n`:'')+
               (ai.doubleSigned?`\u270D\uFE0F <b>DOPPIA FIRMA: ${ai.doubleSigned}</b>\n`:'')+
               (ai.specialDial?`\u{1F3A8} <b>Quadrante speciale:</b> ${ai.specialDial}\n`:'')+
@@ -2496,7 +2496,7 @@ async function runDiscoveryScan() {
 }
 
 // ══════════════ API ROUTES ══════════════
-app.get('/api/versione', (req, res) => res.json({ versione: '12.30', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'], canali_freddi: ['PVP giudiziario IT','Zoll-Auktion DE'], memoria_pressione: desperation.statsSummary() }));
+app.get('/api/versione', (req, res) => res.json({ versione: '12.31', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'], canali_freddi: ['PVP giudiziario IT','Zoll-Auktion DE'], memoria_pressione: desperation.statsSummary() }));
 // ── Diagnostica canali freddi: chiamala a mano per vedere cosa rendono
 //    PVP e Zoll SENZA aspettare il giro delle 12h. La diag dice per ogni
 //    strato (api/html) status e lunghezza risposta: se un selettore va
