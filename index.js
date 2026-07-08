@@ -155,15 +155,13 @@ const STATE_FILE = process.env.STATE_FILE ||
 // annunci scartati tornavano. Se imposti GIST_ID + GITHUB_TOKEN (PAT con scope
 // "gist") su Render, lo stato viene salvato su un Gist privato e SOPRAVVIVE a
 // riavvii e redeploy, gratis. /tmp resta come cache locale veloce.
-// v12.32 — lettura dinamica: su avvio a freddo Render può iniettare le env in
-// ritardo; con getter il Gist si attiva appena le variabili sono disponibili,
-// invece di restare "spento" per tutto l'avvio (causa del "Memoria scarti: NON
-// configurata" pur avendo GIST_ID + GITHUB_TOKEN su Render).
-function _gid()   { return (process.env.GIST_ID || '').trim(); }
-function _gtok()  { return (process.env.GITHUB_TOKEN || process.env.GIST_TOKEN || '').trim(); }
-Object.defineProperty(globalThis, 'GIST_ID',    { get: _gid,  configurable: true });
-Object.defineProperty(globalThis, 'GIST_TOKEN', { get: _gtok, configurable: true });
-Object.defineProperty(globalThis, 'gistOn',     { get: () => !!(_gid() && _gtok()), configurable: true });
+// v12.32 — lettura dinamica anti-avvio-a-freddo, senza globalThis (robusto su
+// Render). GIST_ID/GIST_TOKEN sono funzioni; gistOn è una variabile riallineata
+// da refreshGist(), chiamata prima di ogni operazione sul Gist.
+function GIST_ID()    { return (process.env.GIST_ID || '').trim(); }
+function GIST_TOKEN() { return (process.env.GITHUB_TOKEN || process.env.GIST_TOKEN || '').trim(); }
+let gistOn = !!(GIST_ID() && GIST_TOKEN());
+function refreshGist() { gistOn = !!(GIST_ID() && GIST_TOKEN()); return gistOn; }
 const GIST_FILE  = 'watchbot-state.json';
 // ── v12.32 — BORSA PERSISTENTE ──
 // Secondo file nello STESSO Gist per lo storico della "borsa": prezzi per
@@ -183,8 +181,8 @@ let _gistTimer = null;
 async function gistFetchAll() {
   if (!gistOn) return null;
   try {
-    const r = await axios.get(`https://api.github.com/gists/${GIST_ID}`, {
-      headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' },
+    const r = await axios.get(`https://api.github.com/gists/${GIST_ID()}`, {
+      headers: { Authorization: `Bearer ${GIST_TOKEN()}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' },
       timeout: 12000
     });
     return r.data.files || null;
@@ -197,7 +195,7 @@ async function gistFileContent(f) {
   if (!f.truncated && typeof f.content === 'string' && f.content) return f.content;
   if (f.raw_url) {
     const rr = await axios.get(f.raw_url, {
-      headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot' },
+      headers: { Authorization: `Bearer ${GIST_TOKEN()}`, 'User-Agent': 'watchbot' },
       timeout: 15000, responseType: 'text', transformResponse: [d => d]
     });
     return rr.data;
@@ -226,9 +224,9 @@ function gistSaveDebounced(payload) {
   if (_gistTimer) clearTimeout(_gistTimer);
   _gistTimer = setTimeout(async () => {
     try {
-      await axios.patch(`https://api.github.com/gists/${GIST_ID}`,
+      await axios.patch(`https://api.github.com/gists/${GIST_ID()}`,
         { files: { [GIST_FILE]: { content: JSON.stringify(payload) } } },
-        { headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 12000 });
+        { headers: { Authorization: `Bearer ${GIST_TOKEN()}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 12000 });
       console.log(`[GIST] salvato (${(payload.dismissedUrls||[]).length} scartati, ${Object.keys(payload.alertedFps||{}).length} impronte, ${(payload.blacklistBrands||[]).length} marchi)`);
     } catch (e) { gistLastError = 'save ' + (e.response?.status || e.message); console.error('[GIST] save:', e.response?.status || e.message); }
   }, 4000);
@@ -291,9 +289,9 @@ async function gistSaveNow() {
   try { fs.writeFileSync(STATE_FILE, JSON.stringify(payload)); } catch (e) { console.error('[STATE] save:', e.message); }
   if (!gistLoadOk) { console.log('[GIST] save-now rimandato: load iniziale non confermato (proteggo la memoria su Gist)'); return; }
   try {
-    await axios.patch(`https://api.github.com/gists/${GIST_ID}`,
+    await axios.patch(`https://api.github.com/gists/${GIST_ID()}`,
       { files: { [GIST_FILE]: { content: JSON.stringify(payload) } } },
-      { headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 12000 });
+      { headers: { Authorization: `Bearer ${GIST_TOKEN()}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 12000 });
     console.log(`[GIST] salvato SUBITO (azione utente — ${payload.dismissedUrls.length} scartati)`);
   } catch (e) { console.error('[GIST] save-now:', e.response?.status || e.message); }
 }
@@ -325,6 +323,7 @@ function histRestore(h) {
   return parts.join(', ');
 }
 async function loadHistGist() {
+  refreshGist();
   if (!gistOn) { console.log('[GIST-BORSA] Gist non configurato: lo storico borsa vive solo su /tmp e si azzera a ogni deploy.'); return; }
   const files = await gistFetchAll();
   if (!files) { console.error('[GIST-BORSA] load iniziale FALLITO — salvataggio borsa DISABILITATO per non azzerare lo storico buono. Riproverò al prossimo avvio.'); return; }
@@ -364,9 +363,9 @@ async function gistSaveHist(reason) {
   if (!gistOn || !histSaveOn) return;
   try {
     const s = buildHistPayloadString();
-    await axios.patch(`https://api.github.com/gists/${GIST_ID}`,
+    await axios.patch(`https://api.github.com/gists/${GIST_ID()}`,
       { files: { [HIST_GIST_FILE]: { content: s } } },
-      { headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 15000 });
+      { headers: { Authorization: `Bearer ${GIST_TOKEN()}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 15000 });
     histLastSaved = new Date().toISOString();
     const ts = priceTracker.stats();
     console.log(`[GIST-BORSA] salvata (${ts.modelsTracked} modelli, ${Math.round(s.length/1024)} KB) — ${reason || ''}`);
@@ -404,6 +403,7 @@ function loadState() {
 // Union, mai clobber: il Gist sopravvive ai riavvii, il /tmp no, quindi
 // in pratica è il Gist a ripopolare gli scartati persi.
 async function loadStateGist() {
+  refreshGist();
   if (!gistOn) { console.log('[GIST] non configurato (manca GIST_ID o GITHUB_TOKEN) — persistenza solo /tmp, gli scartati possono tornare dopo un riavvio.'); return; }
   const s = await gistLoad();
   if (!s) {
@@ -3280,6 +3280,7 @@ if (process.env.STARTUP_ENGINE_TEST !== 'false') {
       ).join('\n');
       const tutti = r.every(x => x.ok || /chiave assente/.test(String(x.errore || '')));
       const disponibili = r.some(x => x.ok);
+      refreshGist();
       const mem = gistOn
         ? (gistLoadOk
             ? `💾 Memoria scarti: ✅ Gist attivo — ${db.dismissedFps.length} scarti ricordati`

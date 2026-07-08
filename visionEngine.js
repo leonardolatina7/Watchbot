@@ -39,12 +39,22 @@ const axios = require('axios');
 // chiavi si RILEGGONO da process.env a ogni uso (getter): sempre il valore
 // fresco, immune all'ordine di avvio. Il resto del codice resta invariato.
 const _env = (...names) => { for (const n of names) { const v = process.env[n]; if (v && String(v).trim()) return String(v).trim(); } return null; };
-// CLAUDE_KEY/GEMINI_KEY/GROQ_KEY diventano getter: ogni lettura ripesca l'env
-// fresca. Così ogni `if (CLAUDE_KEY)` e ogni header nel file continua a
-// funzionare com'era, ma senza il buco dell'avvio a freddo.
-Object.defineProperty(globalThis, 'CLAUDE_KEY', { get: () => _env('ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'), configurable: true });
-Object.defineProperty(globalThis, 'GEMINI_KEY', { get: () => _env('GEMINI_API_KEY', 'GOOGLE_API_KEY'), configurable: true });
-Object.defineProperty(globalThis, 'GROQ_KEY',   { get: () => _env('GROQ_API_KEY', 'GROQ_KEY'), configurable: true });
+// v12.32 — FIX "chiave assente" FANTASMA sui riavvii a freddo di Render.
+// PRIMA erano const lette una volta sola al caricamento del file: su avvio a
+// freddo il modulo poteva caricarsi PRIMA che Render iniettasse le env → le
+// const restavano vuote per tutto l'avvio. Ora sono variabili let che una
+// funzione refreshKeys() riallinea a process.env; refreshKeys() viene chiamata
+// all'inizio di ogni operazione (textComplete/visionComplete/selfTest/
+// isConfigured/getStats), così si legge sempre il valore fresco. Niente
+// globalThis: approccio semplice e robusto anche su Render.
+let CLAUDE_KEY = _env('ANTHROPIC_API_KEY', 'CLAUDE_API_KEY');
+let GEMINI_KEY = _env('GEMINI_API_KEY', 'GOOGLE_API_KEY');
+let GROQ_KEY   = _env('GROQ_API_KEY', 'GROQ_KEY');
+function refreshKeys() {
+  CLAUDE_KEY = _env('ANTHROPIC_API_KEY', 'CLAUDE_API_KEY');
+  GEMINI_KEY = _env('GEMINI_API_KEY', 'GOOGLE_API_KEY');
+  GROQ_KEY   = _env('GROQ_API_KEY', 'GROQ_KEY');
+}
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const CLAUDE_URL   = 'https://api.anthropic.com/v1/messages';
 
@@ -149,6 +159,7 @@ function haikuBudgetOk() {
 function haikuBudgetSpend() { _haikuToday++; if (_haikuToday === HAIKU_DAILY_CAP) console.warn(`[visionEngine] ⛔ Tetto Haiku raggiunto (${HAIKU_DAILY_CAP}/giorno): tier normal senza AI fino a mezzanotte`); }
 
 function getStats() {
+  refreshKeys();
   return {
     ...stats,
     claudeConfigured: !!CLAUDE_KEY,
@@ -162,7 +173,7 @@ function getStats() {
     claudeUsedToday: _claudeToday,
   };
 }
-function isConfigured() { return !!CLAUDE_KEY || !!GEMINI_KEY || !!GROQ_KEY; }
+function isConfigured() { refreshKeys(); return !!CLAUDE_KEY || !!GEMINI_KEY || !!GROQ_KEY; }
 
 // ── Scarica un'immagine e la converte in base64 (per Gemini inline_data e Groq) ──
 async function fetchImageBase64(imageUrl) {
@@ -289,6 +300,7 @@ async function groqCallWithRetry(messages, model, opts) {
  * Prova Claude (primario), poi Gemini, poi Groq. Ritorna il testo grezzo o null.
  */
 async function textComplete(prompt, opts = {}) {
+  refreshKeys();
   const o = { maxTokens: 1200, temperature: 0.2, jsonMode: true, ...opts };
 
   if (CLAUDE_KEY && !o.skipClaude && claudeBudgetOk()) { // gate di tesi + tetto giornaliero: oltre il cap, gratis fino a mezzanotte
@@ -355,6 +367,7 @@ async function textComplete(prompt, opts = {}) {
  * Prova Claude (primario), poi Gemini, poi Groq. Ritorna il testo grezzo o null.
  */
 async function visionComplete(imageUrl, prompt, opts = {}) {
+  refreshKeys();
   const o = { maxTokens: 400, temperature: 0, jsonMode: true, ...opts };
   const img = await fetchImageBase64(imageUrl);
   if (!img) return null; // foto non scaricabile: niente vision
@@ -450,6 +463,7 @@ function parseJsonLoose(text) {
 //    esito ✓/✗ con errore ESATTO e millisecondi. Usato dall'endpoint
 //    /api/test-motori e dall'autotest all'avvio. Costo: centesimi. ──
 async function selfTest() {
+  refreshKeys();
   const results = [];
   const tryOne = async (engine, fn, model) => {
     const t0 = Date.now();
