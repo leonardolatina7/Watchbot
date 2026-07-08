@@ -36,7 +36,17 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const CLAUDE_URL   = 'https://api.anthropic.com/v1/messages';
 
 const GEMINI_KEY   = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+// v12.32 — MODELLI GEMINI VALIDI (aggiornati). I nomi 1.5 (gemini-1.5-flash /
+// gemini-1.5-pro) sono stati RITIRATI da Google: danno 404 "is not found for
+// API version v1beta". Se la variabile GEMINI_MODEL su Render contiene ancora
+// un nome ritirato, lo IGNORIAMO qui invece di sbatterci la testa a ogni scan.
+const GEMINI_GOOD = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest', 'gemini-2.5-pro'];
+const GEMINI_DEAD = /1\.5|1-5|pro-vision|gemini-pro\b/i; // pattern dei nomi ritirati
+function sanitizeGeminiEnv(v) {
+  if (!v) return null;
+  return GEMINI_DEAD.test(v) ? null : v; // scarta i nomi morti scritti a mano
+}
+const GEMINI_MODEL = sanitizeGeminiEnv(process.env.GEMINI_MODEL) || 'gemini-2.5-flash';
 const GROQ_KEY     = process.env.GROQ_API_KEY || process.env.GROQ_KEY || null;
 const GROQ_MODEL   = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 const GROQ_VISION  = process.env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
@@ -197,7 +207,7 @@ async function claudeCall(contentBlocks, { maxTokens = 1200, system = null, mode
 //    stessa auto-riparazione di Claude — se il modello (env o default) è morto,
 //    viene marcato e si passa al candidato successivo. ──
 function geminiModelFor() {
-  const cands = [process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+  const cands = [sanitizeGeminiEnv(process.env.GEMINI_MODEL), ...GEMINI_GOOD];
   const list = [...new Set(cands.filter(Boolean))];
   return list.find(m => !_deadModels.has(m)) || list[list.length - 1];
 }
