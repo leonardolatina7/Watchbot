@@ -155,8 +155,15 @@ const STATE_FILE = process.env.STATE_FILE ||
 // annunci scartati tornavano. Se imposti GIST_ID + GITHUB_TOKEN (PAT con scope
 // "gist") su Render, lo stato viene salvato su un Gist privato e SOPRAVVIVE a
 // riavvii e redeploy, gratis. /tmp resta come cache locale veloce.
-const GIST_ID    = process.env.GIST_ID || '';
-const GIST_TOKEN = process.env.GITHUB_TOKEN || process.env.GIST_TOKEN || '';
+// v12.32 — lettura dinamica: su avvio a freddo Render può iniettare le env in
+// ritardo; con getter il Gist si attiva appena le variabili sono disponibili,
+// invece di restare "spento" per tutto l'avvio (causa del "Memoria scarti: NON
+// configurata" pur avendo GIST_ID + GITHUB_TOKEN su Render).
+function _gid()   { return (process.env.GIST_ID || '').trim(); }
+function _gtok()  { return (process.env.GITHUB_TOKEN || process.env.GIST_TOKEN || '').trim(); }
+Object.defineProperty(globalThis, 'GIST_ID',    { get: _gid,  configurable: true });
+Object.defineProperty(globalThis, 'GIST_TOKEN', { get: _gtok, configurable: true });
+Object.defineProperty(globalThis, 'gistOn',     { get: () => !!(_gid() && _gtok()), configurable: true });
 const GIST_FILE  = 'watchbot-state.json';
 // ── v12.32 — BORSA PERSISTENTE ──
 // Secondo file nello STESSO Gist per lo storico della "borsa": prezzi per
@@ -169,7 +176,7 @@ let histSaveOn = false;   // si attiva SOLO dopo un load iniziale riuscito (anti
 let histLastSaved = null; // ISO dell'ultimo salvataggio riuscito (per /api/diagnostica)
 let histLastError = null; // ultimo errore borsa-Gist
 let _histTimer = null;
-const gistOn = !!(GIST_ID && GIST_TOKEN);
+// gistOn è ora un getter dinamico (vedi sopra).
 let gistLastError = null; // v12.29: ultimo errore Gist, esposto nell'autotest
 let _gistTimer = null;
 
@@ -3254,7 +3261,19 @@ app.get('/api/status',async(req,res) => {
 if (process.env.STARTUP_ENGINE_TEST !== 'false') {
   setTimeout(async () => {
     try {
-      const r = await require('./visionEngine').selfTest();
+      let r = await require('./visionEngine').selfTest();
+      // v12.32 — se al primo giro un motore risulta "chiave assente" ma la
+      // chiave È su Render (avvio a freddo: env non ancora pronte), aspetto e
+      // ritento UNA volta prima di gridare l'allarme. Evita i falsi ❌.
+      const chiaveFantasma = r.some(x => !x.ok && /chiave assente/.test(String(x.errore || '')) &&
+        ((x.engine === 'groq' && (process.env.GROQ_API_KEY || process.env.GROQ_KEY)) ||
+         (x.engine === 'gemini' && (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) ||
+         ((x.engine === 'sonnet' || x.engine === 'haiku') && (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY))));
+      if (chiaveFantasma) {
+        console.warn('[AUTOTEST] chiave-assente fantasma al primo giro (env non pronte) → attendo 15s e ritento');
+        await new Promise(s => setTimeout(s, 15000));
+        r = await require('./visionEngine').selfTest();
+      }
       const righe = r.map(x =>
         `${x.ok ? '✅' : '❌'} <b>${x.engine}</b>${x.model ? ` (${x.model})` : ''}` +
         (x.ok ? ` — ok in ${x.ms}ms` : ` — ${String(x.errore || '').replace(/[<>&]/g, '')}`)
@@ -3273,16 +3292,34 @@ if (process.env.STARTUP_ENGINE_TEST !== 'false') {
         cold = `\n🧊 Canali freddi: PVP ${c.pvp && c.pvp.ok ? '✅' : `❌ (${(c.pvp && (c.pvp.status || c.pvp.err)) || '?'})`} · Zoll ${c.zoll && c.zoll.ok ? '✅' : `❌ (${(c.zoll && (c.zoll.status || c.zoll.err)) || '?'})`}`;
       } catch {}
       await tg(
-        `🔧 <b>Autotest motori all'avvio</b> (v12.30)\n\n${righe}\n\n${mem}${cold}\n\n` +
+        `🔧 <b>Autotest motori all'avvio</b> (v12.32)\n\n${righe}\n\n${mem}${cold}\n\n` +
         (disponibili
           ? (tutti ? '✅ Tutto il configurato funziona: il bot analizza.' : '⚠️ Qualcosa fallisce: leggi l\'errore qui sopra, dice già la causa.')
           : '🛑 NESSUN motore funziona: il bot raccoglie ma non analizza. L\'errore sopra dice perché.')
       );
     } catch (e) { console.error('[AUTOTEST]', e.message); }
-  }, 25000);
+  }, 45000); // v12.32: 45s invece di 25s — più margine perché Render inietti le env prima dell'autotest
 }
 
 cron.schedule('0 * * * *',()=>runGoldScan('all').catch(e=>console.error('[SCAN]',e.message)));
+
+// ── KEEP-ALIVE (v12.32) — IL BOT NON SI ADDORMENTA PIÙ ──
+// Sul piano gratis Render, dopo ~15 min di inattività il servizio va in sleep;
+// al risveglio riparte a freddo e a volte legge le env in ritardo → autotest
+// con "chiave assente" fantasma su Groq/Gemini/eBay/Gist, che cambiano a ogni
+// riavvio. Qui il bot chiama se stesso ogni 10 minuti (endpoint /ping
+// leggerissimo): resta sempre sveglio, niente più avvii a freddo, le chiavi
+// non spariscono più. Costo zero. Disattivabile con KEEPALIVE=false.
+app.get('/ping', (req, res) => res.json({ ok: true, up: Math.round(process.uptime()), v: '12.32' }));
+if (process.env.KEEPALIVE !== 'false') {
+  const keepAlive = async () => {
+    try { await axios.get(`${SELF_URL}/ping`, { timeout: 8000 }); }
+    catch (e) { console.error('[KEEPALIVE]', e.code || e.message); }
+  };
+  setInterval(keepAlive, 10 * 60 * 1000); // ogni 10 minuti
+  setTimeout(keepAlive, 60 * 1000);       // primo ping dopo 1 min
+  console.log('[KEEPALIVE] attivo: self-ping ogni 10 min su ' + SELF_URL + '/ping');
+}
 
 // ── BOOST NOTTURNO (ora italiana) ──
 // Di notte Leonardo è sveglio o si sveglia presto e vuole trovare TUTTO pronto.

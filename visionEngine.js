@@ -31,11 +31,24 @@ const axios = require('axios');
 // ── CLAUDE (Anthropic) — PROVIDER PRIMARIO: qualità migliore su testo (3
 //    scenari) e vision (legge marca/quadrante/redial). A pagamento ma con
 //    tetto di spesa impostato da Leonardo su console.anthropic.com. ──
-const CLAUDE_KEY   = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || null;
+// v12.32 — FIX "chiave assente" FANTASMA sui riavvii a freddo di Render.
+// PRIMA le chiavi erano const lette UNA volta al caricamento del file: su un
+// avvio a freddo il modulo poteva essere caricato un attimo PRIMA che Render
+// avesse iniettato le env → le const restavano vuote per TUTTO quell'avvio, e
+// l'autotest gridava "chiave assente" pur avendo le chiavi su Render. Ora le
+// chiavi si RILEGGONO da process.env a ogni uso (getter): sempre il valore
+// fresco, immune all'ordine di avvio. Il resto del codice resta invariato.
+const _env = (...names) => { for (const n of names) { const v = process.env[n]; if (v && String(v).trim()) return String(v).trim(); } return null; };
+// CLAUDE_KEY/GEMINI_KEY/GROQ_KEY diventano getter: ogni lettura ripesca l'env
+// fresca. Così ogni `if (CLAUDE_KEY)` e ogni header nel file continua a
+// funzionare com'era, ma senza il buco dell'avvio a freddo.
+Object.defineProperty(globalThis, 'CLAUDE_KEY', { get: () => _env('ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'), configurable: true });
+Object.defineProperty(globalThis, 'GEMINI_KEY', { get: () => _env('GEMINI_API_KEY', 'GOOGLE_API_KEY'), configurable: true });
+Object.defineProperty(globalThis, 'GROQ_KEY',   { get: () => _env('GROQ_API_KEY', 'GROQ_KEY'), configurable: true });
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5';
 const CLAUDE_URL   = 'https://api.anthropic.com/v1/messages';
 
-const GEMINI_KEY   = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null;
+// GEMINI_KEY è ora un getter globale (vedi sopra): niente const qui.
 // v12.32 — MODELLI GEMINI VALIDI (aggiornati). I nomi 1.5 (gemini-1.5-flash /
 // gemini-1.5-pro) sono stati RITIRATI da Google: danno 404 "is not found for
 // API version v1beta". Se la variabile GEMINI_MODEL su Render contiene ancora
@@ -47,7 +60,7 @@ function sanitizeGeminiEnv(v) {
   return GEMINI_DEAD.test(v) ? null : v; // scarta i nomi morti scritti a mano
 }
 const GEMINI_MODEL = sanitizeGeminiEnv(process.env.GEMINI_MODEL) || 'gemini-2.5-flash';
-const GROQ_KEY     = process.env.GROQ_API_KEY || process.env.GROQ_KEY || null;
+// GROQ_KEY è ora un getter globale (vedi sopra): niente const qui.
 const GROQ_MODEL   = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 const GROQ_VISION  = process.env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
 
