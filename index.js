@@ -158,21 +158,52 @@ const STATE_FILE = process.env.STATE_FILE ||
 const GIST_ID    = process.env.GIST_ID || '';
 const GIST_TOKEN = process.env.GITHUB_TOKEN || process.env.GIST_TOKEN || '';
 const GIST_FILE  = 'watchbot-state.json';
+// ── v12.32 — BORSA PERSISTENTE ──
+// Secondo file nello STESSO Gist per lo storico della "borsa": prezzi per
+// modello (priceTracker), indice marche (catalystTracking) e diario P&L
+// (portfolio). Prima vivevano solo su /tmp → ogni deploy azzerava tutto e i
+// modelli non raggiungevano mai le 5 osservazioni minime per i segnali
+// dip/picco. Da qui in poi la borsa SOPRAVVIVE a riavvii e aggiornamenti.
+const HIST_GIST_FILE = 'watchbot-history.json';
+let histSaveOn = false;   // si attiva SOLO dopo un load iniziale riuscito (anti-azzeramento)
+let histLastSaved = null; // ISO dell'ultimo salvataggio riuscito (per /api/diagnostica)
+let histLastError = null; // ultimo errore borsa-Gist
+let _histTimer = null;
 const gistOn = !!(GIST_ID && GIST_TOKEN);
 let gistLastError = null; // v12.29: ultimo errore Gist, esposto nell'autotest
 let _gistTimer = null;
 
-async function gistLoad() {
+async function gistFetchAll() {
   if (!gistOn) return null;
   try {
     const r = await axios.get(`https://api.github.com/gists/${GIST_ID}`, {
       headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' },
       timeout: 12000
     });
-    const f = r.data.files && r.data.files[GIST_FILE];
-    if (f && f.content) return JSON.parse(f.content);
-  } catch (e) { gistLastError = 'load ' + (e.response?.status || e.message); console.error('[GIST] load:', e.response?.status || e.message); }
-  return null;
+    return r.data.files || null;
+  } catch (e) { gistLastError = 'load ' + (e.response?.status || e.message); console.error('[GIST] load:', e.response?.status || e.message); return null; }
+}
+// I file Gist sopra ~1MB arrivano "truncated": il contenuto intero va ripreso
+// dal raw_url. Gestito qui una volta per tutte le letture.
+async function gistFileContent(f) {
+  if (!f) return null;
+  if (!f.truncated && typeof f.content === 'string' && f.content) return f.content;
+  if (f.raw_url) {
+    const rr = await axios.get(f.raw_url, {
+      headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot' },
+      timeout: 15000, responseType: 'text', transformResponse: [d => d]
+    });
+    return rr.data;
+  }
+  return f.content || null;
+}
+async function gistLoad() {
+  const files = await gistFetchAll();
+  if (!files) return null;
+  try {
+    const c = await gistFileContent(files[GIST_FILE]);
+    return c ? JSON.parse(c) : null;
+  } catch (e) { gistLastError = 'load ' + e.message; console.error('[GIST] load:', e.message); return null; }
 }
 // PROTEZIONE ANTI-AZZERAMENTO: finché il caricamento iniziale del Gist non è
 // andato a buon fine, NON si scrive sul Gist. Senza questo, se il Gist andava in
@@ -259,6 +290,87 @@ async function gistSaveNow() {
     console.log(`[GIST] salvato SUBITO (azione utente — ${payload.dismissedUrls.length} scartati)`);
   } catch (e) { console.error('[GIST] save-now:', e.response?.status || e.message); }
 }
+
+// ══════════════ BORSA PERSISTENTE (v12.32) ══════════════
+// Ripristina lo storico della borsa dal Gist SCRIVENDO i file locali che i
+// moduli leggono già da soli con load(): zero modifiche a priceTracker.js,
+// catalystTracking.js e portfolio.js. Va chiamata PRIMA dei loro .load().
+function histRestore(h) {
+  if (!h || typeof h !== 'object') return '';
+  const savedAt = h.savedAt ? new Date(h.savedAt).getTime() : 0;
+  const trDir  = process.env.DATA_DIR || '/tmp'; // priceTracker usa questo fallback
+  const stdDir = process.env.DATA_DIR || (fs.existsSync('/var/data') ? '/var/data' : '/tmp');
+  try { fs.mkdirSync(trDir, { recursive: true }); fs.mkdirSync(stdDir, { recursive: true }); } catch {}
+  const parts = [];
+  const writeIfOlder = (file, obj, label) => {
+    if (!obj) return;
+    try {
+      // Se sul disco c'è già un file PIÙ FRESCO del backup (es. disco Render
+      // persistente), non lo tocco: il Gist serve quando il disco riparte vuoto.
+      if (fs.existsSync(file) && savedAt && fs.statSync(file).mtimeMs > savedAt) { parts.push(label + ' (locale più fresco, tenuto)'); return; }
+      fs.writeFileSync(file, JSON.stringify(obj));
+      parts.push(label);
+    } catch (e) { console.error('[GIST-BORSA] scrittura', file, 'KO:', e.message); }
+  };
+  if (h.tracker && h.tracker.history) writeIfOlder(trDir + '/watchbot-pricehistory.json', h.tracker, Object.keys(h.tracker.history).length + ' modelli in borsa');
+  if (h.catalyst && h.catalyst.brandIndex) writeIfOlder(stdDir + '/watchbot-catalyst-tracking.json', h.catalyst, Object.keys(h.catalyst.brandIndex).length + ' indici marca');
+  if (h.portfolio && Array.isArray(h.portfolio.items)) writeIfOlder(stdDir + '/watchbot-portfolio.json', h.portfolio, h.portfolio.items.length + ' voci P&L');
+  return parts.join(', ');
+}
+async function loadHistGist() {
+  if (!gistOn) { console.log('[GIST-BORSA] Gist non configurato: lo storico borsa vive solo su /tmp e si azzera a ogni deploy.'); return; }
+  const files = await gistFetchAll();
+  if (!files) { console.error('[GIST-BORSA] load iniziale FALLITO — salvataggio borsa DISABILITATO per non azzerare lo storico buono. Riproverò al prossimo avvio.'); return; }
+  const f = files[HIST_GIST_FILE];
+  if (!f) { histSaveOn = true; console.log('[GIST-BORSA] nessuno storico sul Gist (prima volta): lo creo al primo salvataggio.'); return; }
+  try {
+    const c = await gistFileContent(f);
+    const report = histRestore(JSON.parse(c));
+    histSaveOn = true;
+    console.log(`[GIST-BORSA] storico ripristinato dal Gist: ${report || 'vuoto'}`);
+  } catch (e) {
+    histLastError = 'restore ' + e.message;
+    console.error('[GIST-BORSA] ripristino KO — salvataggio DISABILITATO per proteggere lo storico:', e.message);
+  }
+}
+// Costruisce il payload della borsa. NB: exportData() dei moduli ritorna i
+// dati VIVI: se serve la dieta anti-limite (Gist ~1MB) si pota una COPIA.
+function buildHistPayloadString() {
+  const raw = {
+    v: 1, savedAt: new Date().toISOString(),
+    tracker: priceTracker.exportData(),        // { history, portfolio }
+    catalyst: catalystTracking.exportData(),   // { brandIndex, events }
+    portfolio: { items: portfolio.items },     // diario decisioni + P&L
+  };
+  let s = JSON.stringify(raw);
+  if (s.length > 850000) {
+    const copy = JSON.parse(s);
+    for (const k of Object.keys(copy.tracker.history || {})) {
+      const o = copy.tracker.history[k].obs;
+      if (Array.isArray(o) && o.length > 120) copy.tracker.history[k].obs = o.slice(-120);
+    }
+    s = JSON.stringify(copy);
+  }
+  return s;
+}
+async function gistSaveHist(reason) {
+  if (!gistOn || !histSaveOn) return;
+  try {
+    const s = buildHistPayloadString();
+    await axios.patch(`https://api.github.com/gists/${GIST_ID}`,
+      { files: { [HIST_GIST_FILE]: { content: s } } },
+      { headers: { Authorization: `Bearer ${GIST_TOKEN}`, 'User-Agent': 'watchbot', Accept: 'application/vnd.github+json' }, timeout: 15000 });
+    histLastSaved = new Date().toISOString();
+    const ts = priceTracker.stats();
+    console.log(`[GIST-BORSA] salvata (${ts.modelsTracked} modelli, ${Math.round(s.length/1024)} KB) — ${reason || ''}`);
+  } catch (e) { histLastError = 'save ' + (e.response?.status || e.message); console.error('[GIST-BORSA] save:', e.response?.status || e.message); }
+}
+function gistSaveHistDebounced(reason) {
+  if (!gistOn || !histSaveOn) return;
+  if (_histTimer) clearTimeout(_histTimer);
+  _histTimer = setTimeout(() => gistSaveHist(reason).catch(()=>{}), 20000);
+}
+
 function loadState() {
   if (process.env.BLACKLIST_BRANDS) {
     for (const b of process.env.BLACKLIST_BRANDS.split(',').map(s=>s.trim()).filter(Boolean)) {
@@ -749,6 +861,16 @@ async function tg(text, chatId) {
   if (!process.env.TELEGRAM_TOKEN) return;
   try { await axios.post(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`,{chat_id:chatId||process.env.TELEGRAM_CHAT_ID,text,parse_mode:'HTML'},{timeout:10000}); }
   catch(e) { console.error('[TG]',e.message); }
+}
+// v12.32: invio di una FOTO (usata per i grafici di borsa via QuickChart).
+// Telegram scarica lui l'immagine dall'URL: nessun upload dal server.
+async function tgPhoto(photoUrl, caption, chatId) {
+  if (!process.env.TELEGRAM_TOKEN) return;
+  try {
+    await axios.post(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendPhoto`,
+      { chat_id: chatId || process.env.TELEGRAM_CHAT_ID, photo: photoUrl, caption: String(caption||'').slice(0,1000), parse_mode: 'HTML' },
+      { timeout: 15000 });
+  } catch (e) { console.error('[TG-PHOTO]', e.response?.data?.description || e.message); }
 }
 const mailer = nodemailer.createTransport({host:'smtp.gmail.com',port:587,secure:false,auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}});
 
@@ -2281,7 +2403,8 @@ async function runGoldScan(mode = 'all') {
                     `\u{1F4CA} Storico: <b>\u20AC${sig.baseMed.toLocaleString('it-IT')}</b> \u2192 ora: <b>\u20AC${sig.recentMed.toLocaleString('it-IT')}</b> (${sig.changePct}%)\n\n`+
                     `\u{1F9E0} <b>Da investitore:</b> modello di qualit\u00E0 in saldo. Se i fondamentali tengono, \u00E8 il momento di ACCUMULARE e holdare.\n`+
                     `\u26A0\uFE0F Verifica che il calo sia di mercato, non un singolo pezzo scadente.\n\n`+
-                    `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n`
+                    `<a href="${item.url}">\u{1F449} VEDI ANNUNCIO</a>\n`+
+                    `<a href="${SELF_URL}/api/grafico?key=${encodeURIComponent(priceTracker.modelKey(sig.brand, sig.model))}">\u{1F4C8} GRAFICO COMPLETO</a>\n`
                   );
                 }
                 if (sig && sig.fireAlert && sig.status === 'peak') {
@@ -2291,7 +2414,8 @@ async function runGoldScan(mode = 'all') {
                     `\u231A <b>${sig.brand} ${sig.model}</b>\n`+
                     (c ? `<code>${c.spark}</code> \u2B06\uFE0F\n` : '')+
                     `\u{1F4CA} Storico: <b>\u20AC${sig.baseMed.toLocaleString('it-IT')}</b> \u2192 ora: <b>\u20AC${sig.recentMed.toLocaleString('it-IT')}</b>\n\n`+
-                    `\u{1F9E0} Se ce l'hai, \u00E8 il momento di vendere. Se non ce l'hai, comprare ora = entrare dopo la corsa.\n`
+                    `\u{1F9E0} Se ce l'hai, \u00E8 il momento di vendere. Se non ce l'hai, comprare ora = entrare dopo la corsa.\n`+
+                    `<a href="${SELF_URL}/api/grafico?key=${encodeURIComponent(priceTracker.modelKey(sig.brand, sig.model))}">\u{1F4C8} GRAFICO COMPLETO</a>\n`
                   );
                 }
               }
@@ -2536,6 +2660,8 @@ app.get('/api/diagnostica', async (req, res) => {
   }
   out._ebayApiConfigurata = !!process.env.EBAY_CLIENT_ID;
   out._serpApiConfigurata = !!process.env.SERPAPI_KEY;
+  out._gist = { configurato: gistOn, ultimoErrore: gistLastError };
+  out._gistBorsa = { salvataggioAttivo: histSaveOn, ultimoSalvataggio: histLastSaved, ultimoErrore: histLastError };
   // stato prezzi metalli (live o fallback?)
   try {
     const m = await fetchMetalsSpot();
@@ -2797,9 +2923,56 @@ app.get('/api/mio/add', (req, res) => {
   const { brand, model, price, note, date } = req.query;
   if (!brand || !model || !price) return res.status(400).send('Servono brand, model, price');
   priceTracker.addToPortfolio({ brand, model, buyPrice: price, buyDate: date, note });
+  gistSaveHist('nuovo pezzo in portafoglio').catch(()=>{}); // azione utente rara: salvo SUBITO
   res.send(`<!doctype html><meta charset=utf-8><body style="font-family:sans-serif;background:#11161f;color:#eee;padding:24px">✅ Aggiunto: <b>${brand} ${model}</b> a €${price}<br><br>Quando salirà del ${priceTracker.PEAK_THRESHOLD}%+ ti avviso di vendere.</body>`);
 });
 app.get('/api/mio', (req, res) => res.json(priceTracker.getPortfolio()));
+
+// ── GRAFICO DI BORSA (v12.32) ──
+// /api/grafico            → elenco cliccabile dei modelli tracciati
+// /api/grafico?q=testo    → cerca il modello (es. ?q=longines 30ch)
+// /api/grafico?key=chiave → modello esatto (usato dai link negli alert)
+// Genera un grafico a linea (QuickChart, gratis) e lo manda ANCHE su Telegram.
+app.get('/api/grafico', async (req, res) => {
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const page = inner => `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><body style="font-family:sans-serif;background:#11161f;color:#eee;padding:20px;line-height:1.5">${inner}</body>`;
+  try {
+    const q = String(req.query.key || req.query.q || '').trim().toLowerCase();
+    const { history } = priceTracker.exportData();
+    const list = Object.keys(history)
+      .map(k => ({ k, n: (history[k].obs||[]).length, label: `${history[k].brand} ${history[k].model}` }))
+      .sort((a,b) => b.n - a.n);
+    if (!q) {
+      const rows = list.slice(0, 50).map(m => `<li><a style="color:#7fd4ff" href="/api/grafico?key=${encodeURIComponent(m.k)}">${esc(m.label)}</a> — ${m.n} avvistamenti</li>`).join('');
+      return res.send(page(`📈 <b>Borsa orologi</b> — ${list.length} modelli tracciati<br><small>Tocca un modello: il grafico arriva su Telegram e appare qui.</small><ol>${rows || '<i>ancora vuota: lascia lavorare le scansioni</i>'}</ol>`));
+    }
+    const hit = history[q] ? { k: q } : list.find(m => q.split(/\s+/).every(w => (m.k + ' ' + m.label.toLowerCase()).includes(w)));
+    if (!hit) return res.send(page(`Nessun modello trovato per "<b>${esc(q)}</b>". <a style="color:#7fd4ff" href="/api/grafico">→ elenco modelli tracciati</a>`));
+    const h = history[hit.k];
+    const obs = (h.obs || []).slice().sort((a,b) => new Date(a.at) - new Date(b.at));
+    if (obs.length < 2) return res.send(page(`<b>${esc(h.brand)} ${esc(h.model)}</b>: solo ${obs.length} avvistamento. Servono almeno 2 punti per disegnare una linea — ripassa tra qualche scansione.`));
+    // massimo 40 punti: il grafico resta leggibile e l'URL corto
+    const step = Math.max(1, Math.ceil(obs.length / 40));
+    const pts = obs.filter((_, i) => i % step === 0 || i === obs.length - 1);
+    const labels = pts.map(o => { const d = new Date(o.at); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`; });
+    const dataArr = pts.map(o => Math.round(o.price));
+    let pct = null; try { const sig = priceTracker.computeSignal(hit.k); if (sig && typeof sig.changePct === 'number') pct = sig.changePct; } catch {}
+    const col = (pct !== null && pct < 0) ? '#e74c3c' : '#2ecc71';
+    const cfg = {
+      type: 'line',
+      data: { labels, datasets: [{ label: '€ richiesti', data: dataArr, fill: true, borderColor: col, backgroundColor: 'rgba(127,212,255,0.12)', pointRadius: 2, tension: 0.25 }] },
+      options: { plugins: { legend: { display: false }, title: { display: true, text: `${h.brand} ${h.model} — ${obs.length} avvistamenti` } } }
+    };
+    const chartUrl = 'https://quickchart.io/chart?w=720&h=400&devicePixelRatio=2&bkg=white&c=' + encodeURIComponent(JSON.stringify(cfg));
+    const lo = Math.min(...dataArr), hi = Math.max(...dataArr);
+    const capPct = pct !== null ? ` (${pct > 0 ? '+' : ''}${pct}% recente vs storico)` : '';
+    tgPhoto(chartUrl, `\u{1F4C8} <b>${h.brand} ${h.model}</b>${capPct}\n${obs.length} avvistamenti \u00B7 min \u20AC${lo.toLocaleString('it-IT')} \u00B7 max \u20AC${hi.toLocaleString('it-IT')}`).catch(()=>{});
+    res.send(page(`📈 <b>${esc(h.brand)} ${esc(h.model)}</b>${capPct}<br><img src="${chartUrl}" style="max-width:100%;border-radius:8px;margin:12px 0"><br>${obs.length} avvistamenti · min €${lo.toLocaleString('it-IT')} · max €${hi.toLocaleString('it-IT')}<br><br>✅ Inviato anche su Telegram · <a style="color:#7fd4ff" href="/api/grafico">altri modelli</a>`));
+  } catch (e) {
+    console.error('[GRAFICO]', e.message);
+    res.send(page(`Errore grafico: ${esc(e.message)}`));
+  }
+});
 
 // ── RADAR MARCHI (cacciatore di catalizzatori): controllo manuale ──
 app.get('/api/radar/run', (req, res) => {
@@ -2821,13 +2994,13 @@ app.get('/api/comps', async (req, res) => {
   const verdict = price ? soldComps.priceVerdict(parseFloat(price), comps) : null;
   res.json({ comps, verdict });
 });
-app.get('/api/mio/remove', (req, res) => res.json({ ok: priceTracker.removeFromPortfolio(req.query.id) }));
+app.get('/api/mio/remove', (req, res) => { const ok = priceTracker.removeFromPortfolio(req.query.id); if (ok) gistSaveHist('pezzo rimosso dal portafoglio').catch(()=>{}); res.json({ ok }); });
 app.get('/api/tracker/movers', (req, res) => res.json(priceTracker.topMovers(30)));
 // Manda su Telegram lo "studio mercato" a colpo d'occhio (sparkline + frecce)
 app.get('/api/tracker/report', (req, res) => {
   const msg = priceTracker.telegramReport(Number(req.query.n) || 10);
   res.json({ message: 'Report mercato inviato su Telegram' });
-  tg(msg).catch(e => console.error('[TRACKER-REPORT]', e.message));
+  tg(msg + `\n\n\u{1F4C8} Grafico di un modello: ${SELF_URL}/api/grafico`).catch(e => console.error('[TRACKER-REPORT]', e.message));
 });
 app.get('/api/tracker/stats', (req, res) => res.json(priceTracker.stats()));
 app.get('/api/tracker/export', (req, res) => res.json(priceTracker.exportData()));
@@ -3145,10 +3318,13 @@ cron.schedule('0 7,19 * * *',()=>catalystWatch.runCatalystWatch({ tg, db, markAl
 // RASSEGNA STAMPA: ogni mattina alle 8:00 ORA ITALIANA (Render gira in UTC → fisso il fuso).
 cron.schedule('0 8 * * *',()=>morningBrief.runMorningBrief({ tg, db, saveState }).catch(e=>console.error('[BRIEF]',e.message)), { timezone: 'Europe/Rome' });
 // Studio mercato a colpo d'occhio (sparkline + frecce su/giù): ogni lunedì ore 9:30
-cron.schedule('30 9 * * 1',()=>{ const m=priceTracker.telegramReport(10); if(m) tg(m).catch(e=>console.error('[TRACKER-REPORT]',e.message)); });
+cron.schedule('30 9 * * 1',()=>{ const m=priceTracker.telegramReport(10); if(m) tg(m+`\n\n\u{1F4C8} Grafico di un modello: ${SELF_URL}/api/grafico`).catch(e=>console.error('[TRACKER-REPORT]',e.message)); });
 cron.schedule('0 10 * * 1',()=>{ const m=portfolio.telegramReport(); if(m) tg(m).catch(e=>console.error('[PF-REPORT]',e.message)); });
 // Effetto catalizzatori: misura ogni notte, report settimanale lunedì h10:15
-cron.schedule('0 3 * * *',()=>{ try{ catalystTracking.measureAll(); }catch(e){ console.error('[CAT-TRACK]',e.message); } });
+cron.schedule('0 3 * * *',()=>{ try{ catalystTracking.measureAll(); }catch(e){ console.error('[CAT-TRACK]',e.message); } gistSaveHist('misura notturna').catch(()=>{}); });
+// v12.32 — la borsa si salva DA SOLA sul Gist ogni 30 minuti: anche se Render
+// riavvia o si fa un deploy, al massimo si perde mezz'ora di osservazioni.
+cron.schedule('*/30 * * * *',()=>gistSaveHist('backup periodico').catch(()=>{}));
 cron.schedule('15 10 * * 1',()=>{ const m=catalystTracking.telegramReport(10); if(m) tg(m).catch(e=>console.error('[CAT-TRACK-REPORT]',e.message)); });
 cron.schedule('0 */4 * * *',async()=>{
   for (const item of db.watchlist.filter(w=>w.active)){
@@ -3172,35 +3348,39 @@ const PORT=process.env.PORT||3001;
 app.listen(PORT,'0.0.0.0',async()=>{
   loadState();
   await loadStateGist(); // memoria durevole gratis: ripopola gli scartati persi da /tmp
+  await loadHistGist();  // v12.32: riporta giù dal Gist la BORSA (storico prezzi, indici marca, P&L) PRIMA dei load()
   priceTracker.load(); // storico prezzi + portafoglio investitore
   portfolio.load();    // memoria decisioni compro/passo/vendo + P&L
   catalystTracking.load(); // storico indice brand + eventi catalizzatore
   try { catalystTracking.seedKnownEvents(); } catch(e){ console.error('[CAT-TRACK] seed KO:', e.message); } // eventi noti (B&M/Damiani ecc.)
   const gold=await getGoldPrice().catch(()=>null);
   const platinum=await getPlatinumPrice().catch(()=>null);
-  console.log(`\n⌚ Watch Price Bot v12.4 — porta ${PORT}`);
+  console.log(`\n⌚ Watch Price Bot v12.32 — porta ${PORT}`);
   console.log(`   Oro: €${gold?.toFixed(2)||'N/A'}/g | Platino: €${platinum?.toFixed(2)||'N/A'}/g`);
   if(process.env.TELEGRAM_TOKEN&&process.env.TELEGRAM_CHAT_ID){
     const ts = priceTracker.stats();
     const aiOff = !claudeAnalyst.isConfigured();
     const eh = await ebayHealthWithRetry();
     await tg(
-      `✅ <b>Watch Price Bot v12.21 Online!</b>\n\n🥇 Oro: €${gold?.toFixed(2)||'N/A'}/g\n🔘 Platino: €${platinum?.toFixed(2)||'N/A'}/g\n\n`+
+      `✅ <b>Watch Price Bot v12.32 Online!</b>\n\n🥇 Oro: €${gold?.toFixed(2)||'N/A'}/g\n🔘 Platino: €${platinum?.toFixed(2)||'N/A'}/g\n\n`+
       `🏺 Database vintage: <b>${Object.keys(VINTAGE_DB).length} modelli</b>\n`+
       `📈 Marchi-azienda seguiti: <b>${(brandWatchlist.watchlist||[]).length}</b>\n`+
       `📊 Storico prezzi: <b>${ts.modelsTracked} modelli</b> · portafoglio: <b>${ts.portfolioCount}</b>\n`+
+      (histSaveOn
+        ? `💾 Borsa persistente su Gist: <b>ATTIVA</b> \u2705 (lo storico sopravvive ai deploy)\n`
+        : (gistOn
+            ? `🟠 Borsa persistente: <b>SOSPESA</b> (load Gist fallito all'avvio — scrittura bloccata per proteggere lo storico)\n`
+            : `🔴 Borsa persistente: <b>SPENTA</b> — configura GIST_ID + GITHUB_TOKEN su Render\n`))+
       (eh.ok
         ? `🔎 Ricerca eBay (API): <b>ATTIVA</b> \u2705 (token ottenuto ora)\n`
         : `\n🔴 <b>RICERCA eBay NON ATTIVA.</b>\nMotivo: ${eh.reason}${eh.detail?` \u2014 <code>${String(eh.detail).slice(0,120)}</code>`:''}\n${eh.reason==='chiavi mancanti'?'Aggiungi EBAY_CLIENT_ID / EBAY_CLIENT_SECRET in Environment.':'Le chiavi ci sono ma eBay le rifiuta: probabilmente SCADUTE o revocate. Rigenera le keyset su developer.ebay.com.'}\n`)+
       (aiOff
         ? `🟠 <b>Analista AI SPENTO.</b> Manca la chiave AI su Render (ANTHROPIC_API_KEY, o GEMINI/GROQ come riserva). L'oro funziona lo stesso (è calcolo puro), ma niente verdetti vintage.\n`
         : `🤖 Analista AI: <b>ATTIVO</b> (Claude \u2192 Gemini \u2192 Groq)\n`)+
-      `\n<b>NOVITÀ v12.21:</b>\n`+
-      `\u2615 <b>Rassegna stampa ore 8:00</b>: ogni mattina TUTTE le news dalle testate autorevoli (Hodinkee, Fratello, Monochrome, WatchPro, Oracle Time, Time+Tide, aBlogtoWatch, WatchTime, Worn&Wound, SJX, Europa Star), raggruppate per fonte. Provala subito con <code>/api/brief</code>.\n`+
-      `\u{1F6D1} <b>Radar marchi finto SPENTO</b>: i segnali "deposito marchio" inventati (falso NewCo Holding AG su ogni marca) sono stati eliminati. Niente più falsi catalizzatori.\n`+
-      `\u{1F9E0} Verdetti vintage: motore <b>Claude</b> (primario, qualità alta), con Gemini e Groq come riserva automatica se Claude non risponde.\n`+
-      `\u{1F4F8} <b>Analisi foto attiva</b>: sui pezzi senza marca nel titolo, l'AI prova a leggere il logo dalla foto (flip cieco). L'occhio finale resta sempre il tuo.\n`+
-      `\u{1F947} Oro/platino: arbitraggio a CALCOLO PURO, gira su OGNI annuncio, gratis e non si ferma mai.\n`+
+      `\n<b>NOVITÀ v12.32 — LA BORSA NON DIMENTICA PIÙ:</b>\n`+
+      `\u{1F4BE} Storico prezzi, indice marche e diario P&L ora si salvano sul tuo <b>Gist</b> ogni 30 minuti e vengono ricaricati a ogni avvio: i deploy non azzerano più la borsa.\n`+
+      `\u{1F4C8} <b>Grafici veri stile azionario</b>: apri ${SELF_URL}/api/grafico per l'elenco dei modelli tracciati — tocchi un modello e il grafico arriva qui su Telegram.\n`+
+      `\u{1F517} Il report del lunedì (h9:30) e gli alert dip/picco ora portano il link al grafico completo del modello.\n`+
       `\nPrima scansione tra 90 secondi...`
     );
   }
