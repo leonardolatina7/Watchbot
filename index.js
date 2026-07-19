@@ -96,6 +96,8 @@ const portfolio = require('./portfolio'); // ── MEMORIA DECISIONI + P&L (com
 const catalystTracking = require('./catalystTracking'); // ── STORICO BRAND + EFFETTO CATALIZZATORE ──
 const aiGate = require('./aiGate'); // ── GATE DI TESI PRE-AI (v12.22): scarta la fuffa, Sonnet solo sui caldi ──
 const ahciRadar = require('./ahciRadar'); // ── RADAR AHCI (v12.23): nuovi candidati indie allo stadio rumor ──
+const indieRadar = require('./indieRadar'); // ── RADAR PIPELINE INDIE (v12.33): Morteau/Young Talent + montre-école, intercetta i debutti ──
+const enciclopedia = require('./enciclopedia'); // ── ENCICLOPEDIA (v12.34): le regole del libro (melt, redial, aste, cerchio competenza, margine sicurezza) applicate a ogni annuncio ──
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
 const desperation = require('./desperationScore'); // ── MEMORIA PREZZI + PRESSIONE VENDITORE (v12.30) ──
@@ -2104,6 +2106,23 @@ async function runGoldScan(mode = 'all') {
         let _desp = '';
         try { _desp = desperation.telegramLine({ title: item.title, description: item.description, price: priceEur }); } catch {}
 
+        // ── ENCICLOPEDIA (v12.34): il sapere del libro applicato a ogni annuncio.
+        //    Le righe-regola si appendono a _desp così entrano in TUTTI gli alert
+        //    senza toccare i template. Redial dichiarato = PASS automatico PRIMA
+        //    della chiamata AI (regola condition report + risparmio chiamata). ──
+        let _ency = null;
+        try {
+          _ency = enciclopedia.analyzeWithRules({ title: item.title, description: item.description || '', priceEur });
+          if (_ency.flags.includes('REDIAL_DECLARED')) {
+            trace('PASS AUTOMATICO: redial dichiarato nel testo (regola Enciclopedia)');
+            console.log(`[ENCY] PASS redial dichiarato: ${item.title?.slice(0,55)}`);
+            seenUrls.add(nu); continue;
+          }
+          if (_ency.summaryLines.length) {
+            _desp += `\n\u{1F4D6} <b>Regole dal libro:</b>\n` + _ency.summaryLines.map(l => '\u2022 ' + l).join('\n') + '\n';
+          }
+        } catch (e) { console.error('[ENCY]', e.message); }
+
         // ── OSSERVATI: un pezzo che segui è ricomparso sotto soglia? ──
         try { await checkObservedMatch(item, priceEur); } catch {}
 
@@ -2216,9 +2235,41 @@ async function runGoldScan(mode = 'all') {
         }
         if (_gate.tier === 'top') console.log(`[GATE-TESI] 🔥 TOP (${_gate.reason}) → Sonnet: ${item.title?.slice(0,55)}`);
 
+        // ── RADAR PIPELINE INDIE (v12.33): intercetta i debutti della nuova onda
+        //    (Morteau/Young Talent) e le montre-école sottovalutate PRIMA che il
+        //    mercato li scopra. Non interrompe il flusso: manda un alert dedicato
+        //    e lascia proseguire l'item verso l'analisi AI normale. Il caso che
+        //    vale oro è 'discovery': provenienza forte + nome sconosciuto. ──
+        try {
+          const _indie = indieRadar.scoreIndieListing({ title: item.title, description: item.description || '', price: priceEur });
+          if (_indie.isIndie && _indie.score >= (parseInt(process.env.INDIE_MIN_SCORE || '6', 10))) {
+            const _fpIndie = 'indie:' + nu;
+            if (!db.indieSeen) db.indieSeen = [];
+            if (!db.indieSeen.includes(_fpIndie)) {
+              db.indieSeen.push(_fpIndie);
+              if (db.indieSeen.length > 4000) db.indieSeen = db.indieSeen.slice(-2000);
+              saveState();
+              funnelBump('indieRadar');
+              const _emoji = _indie.tier === 'discovery' ? '\u{1F9ED}\u{1F4A1}' : (_indie.tier === 'ecole' ? '\u{1F393}' : '\u{1F9ED}');
+              const _prov = (_indie.provenance || []).slice(0, 6).join(' \u00B7 ') || '\u2014';
+              await tg(
+                `${_emoji} <b>RADAR INDIE \u2014 ${_indie.verdict}</b>\n\n`+
+                `<b>${(item.title||'').slice(0,80)}</b>\n`+
+                (_indie.maker ? `Maker: <b>${_indie.maker}</b> [${_indie.tier}]\n` : `Nome non tracciato (possibile debutto)\n`)+
+                `Provenienza: ${_prov}\n`+
+                (_indie.note ? `Nota: ${_indie.note}\n` : '')+
+                `Score: ${_indie.score}\n`+
+                `Prezzo: ${priceEur>0?('\u20AC'+priceEur):'n/d'}\n`+
+                `\n${item.url||''}`
+              );
+              console.log(`[INDIE-RADAR] ${_indie.verdict} (score ${_indie.score}): ${item.title?.slice(0,55)}`);
+            }
+          }
+        } catch (e) { console.error('[INDIE-RADAR]', e.message); }
+
         // ── ANALISI AI = MOTORE PRINCIPALE (tier top → Claude; resto → Gemini/Groq) ──
         if (claudeAnalyst.isConfigured()) {
-          const ai = await claudeAnalyst.analyzeListing(item.title, priceEur, item.image, { tier: _gate.tier });
+          const ai = await claudeAnalyst.analyzeListing(item.title, priceEur, item.image, { tier: _gate.tier, encyclopediaDigest: enciclopedia.DIGEST, encyFlags: _ency ? _ency.flags : [] });
           funnelBump('analizzatiAI');
           if (!ai) funnelBump('aiSenzaRisposta'); else if (!ai.isInteresting) funnelBump('aiNonInteressante'); else funnelBump('aiInteressante');
           // ── MIGLIORI DEL GIRO (v12.26): registro ogni pezzo con una stima,
@@ -2627,7 +2678,7 @@ async function runDiscoveryScan() {
 }
 
 // ══════════════ API ROUTES ══════════════
-app.get('/api/versione', (req, res) => res.json({ versione: '12.31', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'], canali_freddi: ['PVP giudiziario IT','Zoll-Auktion DE'], memoria_pressione: desperation.statsSummary() }));
+app.get('/api/versione', (req, res) => res.json({ versione: '12.34', mercati: ['eBay','Subito','Vinted','Chrono24','Catawiki','Leboncoin','Wallapop','Ricardo','OLX.pl','OLX.ro','Allegro.pl','Sprzedajemy.pl','Okazii.ro','MercadoLibre MX','MercadoLibre BR'], canali_freddi: ['PVP giudiziario IT','Zoll-Auktion DE'], memoria_pressione: desperation.statsSummary() }));
 // ── Diagnostica canali freddi: chiamala a mano per vedere cosa rendono
 //    PVP e Zoll SENZA aspettare il giro delle 12h. La diag dice per ogni
 //    strato (api/html) status e lunghezza risposta: se un selettore va
@@ -2924,6 +2975,31 @@ app.get('/api/ahci', async (req,res)=>{ // check manuale radar AHCI (v12.23)
   res.json(r.ok ? { ok:true, candidati:r.candidates.map(c=>c.name), nuovi:r.newOnes.map(c=>c.name), notiSalvati:(db.ahciKnown||[]).length } : { ok:false, errore:r.error });
 });
 app.get('/api/claude/check',async(req,res)=>{ const {title,price,image}=req.query; if(!title) return res.status(400).json({error:'?title= richiesto'}); if(!claudeAnalyst.isConfigured()) return res.json({configured:false,message:'GROQ_API_KEY non configurata'}); const result=await claudeAnalyst.analyzeListing(title, price?parseFloat(price):5000, image||'', { tier: req.query.tier || 'top' }); res.json(result||{error:'Analisi fallita'}); });
+
+// ── ENCICLOPEDIA (v12.34): test manuale delle regole del libro su un annuncio.
+//    Es: /api/ency?title=VC%20tasca%20oro%2018k&desc=peso%2092%20grammi&price=2400 ──
+app.get('/api/ency', (req, res) => {
+  const { title, desc, price } = req.query;
+  if (!title) return res.json({ hint: 'usa ?title=...&desc=...&price=...', digestChars: enciclopedia.DIGEST.length });
+  res.json(enciclopedia.analyzeWithRules({ title, description: desc || '', priceEur: price ? parseFloat(price) : null }));
+});
+
+// ── RADAR PIPELINE INDIE (v12.33): test manuale dello scoring su un annuncio.
+//    Es: /api/indie?title=Aubert%20%26%20Ramel%20Ourea&desc=Morteau%20Simon%20Brette&price=72000
+//    Senza parametri, elenca la pipeline nota + le keyword iniettabili in scan. ──
+app.get('/api/indie', (req, res) => {
+  const { title, desc, price, name } = req.query;
+  if (name) return res.json(indieRadar.indexIndieName(name));
+  if (!title) {
+    return res.json({
+      pipeline: indieRadar.PIPELINE.map(m => ({ name: m.name, tier: m.tier, note: m.note })),
+      keywords: indieRadar.watchlistKeywords(),
+      hint: 'usa ?title=...&desc=...&price=... per testare un annuncio, o ?name=... per cercare un maker'
+    });
+  }
+  const r = indieRadar.scoreIndieListing({ title, description: desc || '', price: price ? parseFloat(price) : null });
+  res.json(r);
+});
 
 // ── PORTAFOGLIO INVESTITORE + TRACKER ──
 app.get('/api/mio/add', (req, res) => {
