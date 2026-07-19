@@ -152,10 +152,23 @@ async function analyzeListing(title, priceEur, imageUrl, opts = {}) {
   // (llama-4-scout, in deprecazione) NON abilita da solo il ramo foto.
   const hasImage = !!imageUrl && (!!process.env.ANTHROPIC_API_KEY || !!process.env.GEMINI_API_KEY);
 
+  // ── DIGEST ENCICLOPEDIA (v12.34): le regole del dealer (Enciclopedia del
+  //    Vintage v22) iniettate nel prompt quando index.js le passa. ~500 token:
+  //    su Gemini/Groq gratis il costo è zero, il guadagno è che l'AI valuta
+  //    "con la testa del dealer" (melt, redial, curva, cerchio) e non da
+  //    modello generico. I flag già rilevati dalla macchina (enciclopedia.js)
+  //    le vengono passati per non farle ripetere il lavoro. ──
+  const _ency = opts.encyclopediaDigest
+    ? `\n${opts.encyclopediaDigest}\n` +
+      (Array.isArray(opts.encyFlags) && opts.encyFlags.length
+        ? `FLAG GIÀ RILEVATI DALLA MACCHINA (tienine conto): ${opts.encyFlags.join(', ')}\n`
+        : '')
+    : '';
+
   const prompt = `Sei un esperto di orologi vintage con un fiuto speciale per i GIOIELLI DIMENTICATI: marchi svizzeri di qualità, oggi sottovalutati, ma con bei calibri (spesso di manifattura o cronografi Valjoux/Venus/Lemania/Excelsior Park) e potenziale di rivalutazione. Esempi del genere che cerchi: Nivada Grenchen, Gallet, Excelsior Park, Wakmann, Eterna, Girard-Perregaux, Zenith cal.135, Enicar, Vulcain, Doxa, Favre-Leuba, Universal Genève, LIP, vintage Movado/Longines/Tissot di qualità.
 
 NON ti interessano i nomi iper-famosi e iper-quotati (Rolex sportivi, Patek moderni) dove non c'è margine: lì il prezzo giusto lo sanno tutti.
-
+${_ency}
 ${hasImage ? 'Guarda la FOTO e leggi' : 'Leggi'} questo annuncio e rispondi SOLO con un oggetto JSON, senza testo prima o dopo, senza backtick.
 
 Annuncio: "${title}"
