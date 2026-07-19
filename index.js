@@ -96,8 +96,21 @@ const portfolio = require('./portfolio'); // ── MEMORIA DECISIONI + P&L (com
 const catalystTracking = require('./catalystTracking'); // ── STORICO BRAND + EFFETTO CATALIZZATORE ──
 const aiGate = require('./aiGate'); // ── GATE DI TESI PRE-AI (v12.22): scarta la fuffa, Sonnet solo sui caldi ──
 const ahciRadar = require('./ahciRadar'); // ── RADAR AHCI (v12.23): nuovi candidati indie allo stadio rumor ──
-const indieRadar = require('./indieRadar'); // ── RADAR PIPELINE INDIE (v12.33): Morteau/Young Talent + montre-école, intercetta i debutti ──
-const enciclopedia = require('./enciclopedia'); // ── ENCICLOPEDIA (v12.34): le regole del libro (melt, redial, aste, cerchio competenza, margine sicurezza) applicate a ogni annuncio ──
+// ── RADAR PIPELINE INDIE (v12.33) + ENCICLOPEDIA (v12.34): moduli nuovi.
+//    Require TOLLERANTE: se il file manca nel repo, il bot NON crasha — parte
+//    con uno stub inerte e lo scrive nel log. Così un deploy parziale non
+//    ammazza tutto (lezione del crash 19/07). ──
+let indieRadar, enciclopedia;
+try { indieRadar = require('./indieRadar'); }
+catch (e) {
+  console.warn('[BOOT] indieRadar.js MANCANTE nel repo: radar indie spento. Carica il file per attivarlo.');
+  indieRadar = { scoreIndieListing: () => ({ isIndie: false, flags: [], score: 0 }), watchlistKeywords: () => [], indexIndieName: () => ({ known: false }), PIPELINE: [] };
+}
+try { enciclopedia = require('./enciclopedia'); }
+catch (e) {
+  console.warn('[BOOT] enciclopedia.js MANCANTE nel repo: regole del libro spente. Carica il file per attivarle.');
+  enciclopedia = { analyzeWithRules: () => ({ flags: [], summaryLines: [], meltEstimate: null, marginOfSafety: null }), DIGEST: '' };
+}
 // ── FLIP CIECO (gemme nascoste da inserzioni generiche) ──
 const genericQueries = require('./genericQueries');
 const desperation = require('./desperationScore'); // ── MEMORIA PREZZI + PRESSIONE VENDITORE (v12.30) ──
