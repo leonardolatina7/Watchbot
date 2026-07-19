@@ -213,6 +213,32 @@ function buildInsightLines({ brand, model, priceEur, marginEur, evRating, sleepe
   return { lines: out, resaleDays, efficiency: eff, classe: cls, relative: rel };
 }
 
+// ── PERSISTENZA SU GIST (v12.34): prima la borsa-mediane viveva solo su file
+//    locale (che su Render senza disco persistente si azzera a ogni deploy).
+//    index.js ora la include nel backup watchbot-history.json sul Gist.
+//    importData fa MERGE (non sovrascrive): se il disco persistente ha già
+//    dati più freschi caricati al require, si uniscono per chiave e si ripulisce
+//    per finestra temporale — mai perdere osservazioni buone. ──
+function exportData() {
+  return { priceHistory };
+}
+function importData(data) {
+  if (!data || typeof data.priceHistory !== 'object') return 'nulla da ripristinare';
+  const cutoff = Date.now() - WINDOW_DAYS * 864e5;
+  let merged = 0;
+  for (const [k, arr] of Object.entries(data.priceHistory)) {
+    if (!Array.isArray(arr)) continue;
+    const cur = priceHistory[k] || [];
+    const seen = new Set(cur.map(p => p.ts));
+    for (const p of arr) {
+      if (p && p.ts >= cutoff && !seen.has(p.ts)) { cur.push(p); merged++; }
+    }
+    if (cur.length) priceHistory[k] = cur.sort((a, b) => a.ts - b.ts);
+  }
+  persist();
+  return `${Object.keys(priceHistory).length} modelli in dealEngine (+${merged} osservazioni dal backup)`;
+}
+
 module.exports = {
   recordPrice,
   seenCount,
@@ -222,4 +248,6 @@ module.exports = {
   classifyDeal,
   buildInsightLines,
   median,
+  exportData,
+  importData,
 };

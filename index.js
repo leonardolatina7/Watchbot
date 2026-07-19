@@ -335,6 +335,9 @@ function histRestore(h) {
   if (h.tracker && h.tracker.history) writeIfOlder(trDir + '/watchbot-pricehistory.json', h.tracker, Object.keys(h.tracker.history).length + ' modelli in borsa');
   if (h.catalyst && h.catalyst.brandIndex) writeIfOlder(stdDir + '/watchbot-catalyst-tracking.json', h.catalyst, Object.keys(h.catalyst.brandIndex).length + ' indici marca');
   if (h.portfolio && Array.isArray(h.portfolio.items)) writeIfOlder(stdDir + '/watchbot-portfolio.json', h.portfolio, h.portfolio.items.length + ' voci P&L');
+  // dealEngine (v12.34): ripristino DIRETTO in RAM con merge — il modulo ha già
+  // caricato l'eventuale file locale al require, importData unisce senza perdere.
+  if (h.deal) { try { parts.push(dealEngine.importData(h.deal)); } catch (e) { console.error('[GIST-BORSA] dealEngine restore:', e.message); } }
   return parts.join(', ');
 }
 async function loadHistGist() {
@@ -362,6 +365,7 @@ function buildHistPayloadString() {
     tracker: priceTracker.exportData(),        // { history, portfolio }
     catalyst: catalystTracking.exportData(),   // { brandIndex, events }
     portfolio: { items: portfolio.items },     // diario decisioni + P&L
+    deal: dealEngine.exportData(),             // mediane/liquidità dealEngine (v12.34)
   };
   let s = JSON.stringify(raw);
   if (s.length > 850000) {
@@ -2285,6 +2289,23 @@ async function runGoldScan(mode = 'all') {
           const ai = await claudeAnalyst.analyzeListing(item.title, priceEur, item.image, { tier: _gate.tier, encyclopediaDigest: enciclopedia.DIGEST, encyFlags: _ency ? _ency.flags : [] });
           funnelBump('analizzatiAI');
           if (!ai) funnelBump('aiSenzaRisposta'); else if (!ai.isInteresting) funnelBump('aiNonInteressante'); else funnelBump('aiInteressante');
+
+          // ── BORSA OROLOGI SEMPRE ALIMENTATA (v12.34, fix "0 modelli"): prima
+          //    la registrazione girava SOLO nei canali alert → la borsa restava
+          //    vuota. Ora OGNI annuncio analizzato con brand valido e prezzo
+          //    entra nell'indice (priceTracker = la pagina /api/grafico,
+          //    catalystTracking = indice marca, dealEngine = liquidità/mediane),
+          //    anche se l'AI lo boccia: un listino di borsa registra tutti i
+          //    prezzi visti, non solo le occasioni. Il segnale dip/picco (_ptSig)
+          //    viene calcolato QUI una volta sola e riusato a valle — niente
+          //    doppie registrazioni che falsano le mediane. ──
+          let _ptSig = null;
+          if (ai && ai.brand && ai.brand !== '?' && ai.brand !== 'null' && priceEur > 0) {
+            try { if (ai.model && ai.model !== '?' && ai.model !== 'null') _ptSig = priceTracker.record(ai.brand, ai.model, priceEur); } catch {}
+            try { catalystTracking.recordPrice(ai.brand, priceEur); } catch {}
+            try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
+          }
+
           // ── MIGLIORI DEL GIRO (v12.26): registro ogni pezzo con una stima,
           //    anche se bocciato dalle soglie — mai più un giro muto senza
           //    contesto. v12.31: i pezzi DA COLLEZIONE (oro o acciaio) entrano
@@ -2319,7 +2340,6 @@ async function runGoldScan(mode = 'all') {
               }
               // Referenza incerta MA prezzo ben sotto la stima bassa: questo sì
               // che merita gli occhi di Leonardo. Avviso forte comunque.
-              try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
               await tg(
                 `\u{1F50E} <b>DA VERIFICARE \u2014 REFERENZA INCERTA</b>\n\n`+
                 `\u231A ${item.title?.slice(0,70)}\n`+
@@ -2339,7 +2359,6 @@ async function runGoldScan(mode = 'all') {
             }
             if (ai.isFlipGrezzo) {
               foundGrezzo = (typeof foundGrezzo === 'number' ? foundGrezzo : 0) + 1;
-              try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
               await tg(
                 `\u{1F527} <b>FLIP GREZZO \u2014 DA VERIFICARE TU</b>\n\n`+
                 `\u231A ${item.title?.slice(0,70)}\n`+
@@ -2372,7 +2391,6 @@ async function runGoldScan(mode = 'all') {
               const bar = (n, max) => '\u25B0'.repeat(Math.min(n,max)) + '\u25B1'.repeat(Math.max(0,max-n));
               const fvLow = ai.futureValueLow || 0, fvHigh = ai.futureValueHigh || 0;
               const upsidePct = (fvHigh && priceEur) ? Math.round(((fvHigh - priceEur) / priceEur) * 100) : 0;
-              try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
               // ── TAPE VENDUTI REALI: solo sui pick investitore (i più importanti),
               //    attivabile con SOLD_COMPS_ON=1 per controllare il costo SerpAPI. ──
               let soldLine = '';
@@ -2412,7 +2430,6 @@ async function runGoldScan(mode = 'all') {
                 `<a href=\"${item.url}\">\u{1F449} VEDI ANNUNCIO</a>\n\n\u2796\u2796\u2796\n`+
                 feedbackLinks(ai.brand, item.url, item.title, priceEur)
               );
-              try { if (ai.brand && ai.model && ai.brand!=='?' && ai.model!=='?') priceTracker.record(ai.brand, ai.model, priceEur); } catch {}
               try { if (ai.brand && ai.brand!=='?') catalystTracking.recordPrice(ai.brand, priceEur); } catch {}
               continue;
             }
@@ -2439,7 +2456,6 @@ async function runGoldScan(mode = 'all') {
                 feedbackLinks(ai.brand, item.url, item.title, priceEur)
               );
               // Registro comunque nello storico prezzi (serve al tracker)
-              try { if (ai.brand && ai.model && ai.brand!=='?' && ai.model!=='?') priceTracker.record(ai.brand, ai.model, priceEur); } catch {}
               try { if (ai.brand && ai.brand!=='?') catalystTracking.recordPrice(ai.brand, priceEur); } catch {}
               continue;
             }
@@ -2462,9 +2478,7 @@ async function runGoldScan(mode = 'all') {
                     );
                   }
                 }
-                const sig = priceTracker.record(ai.brand, ai.model, priceEur);
-                try { if (ai.brand && ai.brand!=='?') catalystTracking.recordPrice(ai.brand, priceEur); } catch {}
-                try { dealEngine.recordPrice(ai.brand, ai.model, priceEur); } catch {}
+                const sig = _ptSig; // registrato una volta sola a monte (v12.34): niente doppio conteggio
                 if (sig && sig.fireAlert && sig.status === 'dip') {
                   const c = priceTracker.chartFor(sig.brand, sig.model);
                   await tg(
