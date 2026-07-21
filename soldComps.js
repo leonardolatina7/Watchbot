@@ -106,15 +106,33 @@ async function getComps(brand, model, opts = {}) {
 }
 
 // ── VERDETTO PREZZO: confronta un prezzo richiesto col tape venduto ─────────
+// ── SOGLIA CAMPIONE: sotto questo n, il "venduto reale" non è un segnale ──
+// La mediana su n=4 ha errore standard ~1.25*sigma/sqrt(4) = 0.63*sigma: un
+// "-20% sotto la mediana" è indistinguibile dal rumore. A n>=8 il segnale
+// inizia a esistere. Meglio TACERE che dare un numero che non significa nulla:
+// un alert sbagliato ti addestra a diffidare anche di quelli giusti.
+const MIN_N_VERDICT = parseInt(process.env.COMPS_MIN_N || '8');
+
 function priceVerdict(askPrice, comps) {
-  if (!comps || !comps.fair) return null;
-  const deltaPct = Math.round(((comps.fair - askPrice) / comps.fair) * 100); // + = sotto il giusto
+  if (!comps || !comps.count) return null;
+  // Campione insufficiente: nessuna percentuale, solo l'avviso.
+  if (comps.count < MIN_N_VERDICT) {
+    return { deltaPct: null, weak: true, sampleSize: comps.count,
+      tag: `\u2753 campione troppo piccolo (n=${comps.count}) \u2014 nessun verdetto affidabile` };
+  }
+  // BASE = MEDIANA, non il trimmed mean. Con n piccolo il trim al 10% non
+  // taglia nulla (floor(6*0.1)=0), quindi "fair" è una media semplice
+  // travestita da robusta: un lotto o un pezzo rotto la sballa. La mediana
+  // ha punto di rottura 50%, il trimmed mean solo 10%.
+  const base = comps.median;
+  if (!base) return null;
+  const deltaPct = Math.round(((base - askPrice) / base) * 100); // + = sotto il giusto
   let tag;
   if (deltaPct >= 25) tag = '\u{1F525} BEN SOTTO il venduto reale';
   else if (deltaPct >= 10) tag = '\u2705 sotto il venduto reale';
   else if (deltaPct >= -10) tag = '\u2696\uFE0F in linea col venduto reale';
   else tag = '\u{1F6A9} SOPRA il venduto reale';
-  return { deltaPct, tag };
+  return { deltaPct, tag, base, sampleSize: comps.count, weak: false };
 }
 
 // ── Riga pronta per gli alert Telegram ──
@@ -124,7 +142,9 @@ function buildSoldLine(askPrice, comps) {
   return `\n\u{1F4C8} <b>VENDUTI REALI (eBay 90gg):</b> mediana \u20AC${comps.median.toLocaleString('it-IT')} ` +
     `(${comps.min.toLocaleString('it-IT')}\u2013${comps.max.toLocaleString('it-IT')}, n=${comps.count})\n` +
     `${comps.liquidityLabel} Liquidità: <b>${comps.liquidityTier}</b> \u00B7 rivendi in ~${comps.resaleEstimate}\n` +
-    (v ? `\u{1F3AF} Il prezzo chiesto è ${v.tag}${v.deltaPct ? ` (${v.deltaPct > 0 ? '-' : '+'}${Math.abs(v.deltaPct)}% vs giusto)` : ''}\n` : '');
+    (!v ? '' : v.weak
+      ? `\u{1F3AF} ${v.tag}\n`
+      : `\u{1F3AF} Il prezzo chiesto è ${v.tag}${v.deltaPct ? ` (${v.deltaPct > 0 ? '-' : '+'}${Math.abs(v.deltaPct)}% vs mediana, n=${v.sampleSize})` : ''}\n`);
 }
 
 module.exports = { getComps, fetchSold, priceVerdict, buildSoldLine, median, trimmedMean, liquidity };

@@ -24,11 +24,6 @@
 const axios = require('axios');
 const brandWatchlist = require('./brandWatchlist');
 const marketCycles = require('./marketCycles');
-// MOTORE AI UNICO (Gemini primario → Groq fallback), sia testo che vision.
-// Sostituisce la chiamata diretta a Groq: risolve il 429 rate-limit al minuto
-// (Gemini free tier più generoso) e permette finalmente l'analisi ANCHE della
-// foto (Gemini è multimodale; Groq testo no). Vedi visionEngine.js.
-const visionEngine = require('./visionEngine');
 
 // GROQ — inferenza gratuita su modelli open (formato compatibile OpenAI).
 // Default: Llama 3.3 70B = giudizio migliore, multilingue, JSON affidabile.
@@ -42,7 +37,7 @@ const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // ── Tetto morbido analisi/giorno (il piano gratis Groq limita anche i TOKEN
 // al giorno: se si tocca il limite, un 429 mette in pausa l'AI fino al reset
 // — l'oro intanto continua a girare). Alzalo/abbassalo con GROQ_DAILY_LIMIT. ──
-const DAILY_LIMIT = parseInt(process.env.GROQ_DAILY_LIMIT || '1000');
+const DAILY_LIMIT = parseInt(process.env.GROQ_DAILY_LIMIT || '300');
 let usage = { day: new Date().getDate(), count: 0 };
 function quotaOk() {
   const d = new Date().getDate();
@@ -58,21 +53,12 @@ function cacheKey(title) {
 }
 
 function isConfigured() {
-  // Basta UNO dei due provider (Gemini o Groq) per far girare l'analisi.
-  return visionEngine.isConfigured();
+  return !!process.env.GROQ_API_KEY;
 }
 
 function getUsage() {
-  // Etichetta modello REALE: il motore primario è Claude (via visionEngine).
-  // Prima mostrava il vecchio Groq llama-3.3, fuorviante in /api/status.
-  const modelLabel = process.env.ANTHROPIC_API_KEY
-    ? (process.env.CLAUDE_MODEL || 'claude-sonnet-5')
-    : (process.env.GEMINI_API_KEY ? (process.env.GEMINI_MODEL || 'gemini') : MODEL);
-  return { used: usage.count, limit: DAILY_LIMIT, cached: cache.size, model: modelLabel };
+  return { used: usage.count, limit: DAILY_LIMIT, cached: cache.size, model: MODEL };
 }
-
-// NB: il throttle anti-429 e il fallback tra provider ora vivono in
-// visionEngine.js (motore unico). Qui non serve più gestirli.
 
 /**
  * Scarica un'immagine e la converte in base64 per Claude.
@@ -105,13 +91,8 @@ async function fetchImageBase64(imageUrl) {
  * Ritorna: { isInteresting, brand, model, caliber, material, valueLow,
  *            valueHigh, reasoning, confidence, sawImage, studyPick } oppure null.
  */
-async function analyzeListing(title, priceEur, imageUrl, opts = {}) {
+async function analyzeListing(title, priceEur, imageUrl) {
   if (!isConfigured()) return null;
-  // ── TIER MOTORE (v12.22, gate di tesi): 'top' = candidato caldo → Claude
-  //    Sonnet (primario a pagamento). Tutto il resto → skipClaude: parte
-  //    direttamente da Gemini Flash (gratis) e ripiega su Groq. Così Sonnet
-  //    lavora SOLO sulle opportunità vere e il budget mensile regge.
-  const _skipClaude = opts.tier !== 'top';
   if (!title) return null;
 
   // ── PRE-FILTRO ANTI-FUMO (a costo zero, PRIMA di Claude) ──
@@ -143,32 +124,15 @@ async function analyzeListing(title, priceEur, imageUrl, opts = {}) {
     return null;
   }
 
-  // Il motore ora usa Gemini (multimodale) come primario: se c'è una foto E
-  // Gemini è configurato, la ANALIZZIAMO. Se Gemini manca, si ripiega su Groq
-  // testo (che le foto non le vede) e l'analisi resta sul solo titolo.
-  // Vision attiva se c'è un provider che vede le foto: Claude (primario) o
-  // Gemini. Prima era legata alla sola GEMINI_API_KEY: con Claude primario
-  // la foto non sarebbe mai stata usata senza anche Gemini. Groq vision
-  // (llama-4-scout, in deprecazione) NON abilita da solo il ramo foto.
-  const hasImage = !!imageUrl && (!!process.env.ANTHROPIC_API_KEY || !!process.env.GEMINI_API_KEY);
-
-  // ── DIGEST ENCICLOPEDIA (v12.34): le regole del dealer (Enciclopedia del
-  //    Vintage v22) iniettate nel prompt quando index.js le passa. ~500 token:
-  //    su Gemini/Groq gratis il costo è zero, il guadagno è che l'AI valuta
-  //    "con la testa del dealer" (melt, redial, curva, cerchio) e non da
-  //    modello generico. I flag già rilevati dalla macchina (enciclopedia.js)
-  //    le vengono passati per non farle ripetere il lavoro. ──
-  const _ency = opts.encyclopediaDigest
-    ? `\n${opts.encyclopediaDigest}\n` +
-      (Array.isArray(opts.encyFlags) && opts.encyFlags.length
-        ? `FLAG GIÀ RILEVATI DALLA MACCHINA (tienine conto): ${opts.encyFlags.join(', ')}\n`
-        : '')
-    : '';
+  // Groq (Llama 3.3 70B & co.) è SOLO testo: niente analisi foto. Il giudizio
+  // si basa su titolo + dati dell'annuncio. Le foto le guardi tu prima di comprare.
+  const img = null;
+  const hasImage = !!img;
 
   const prompt = `Sei un esperto di orologi vintage con un fiuto speciale per i GIOIELLI DIMENTICATI: marchi svizzeri di qualità, oggi sottovalutati, ma con bei calibri (spesso di manifattura o cronografi Valjoux/Venus/Lemania/Excelsior Park) e potenziale di rivalutazione. Esempi del genere che cerchi: Nivada Grenchen, Gallet, Excelsior Park, Wakmann, Eterna, Girard-Perregaux, Zenith cal.135, Enicar, Vulcain, Doxa, Favre-Leuba, Universal Genève, LIP, vintage Movado/Longines/Tissot di qualità.
 
 NON ti interessano i nomi iper-famosi e iper-quotati (Rolex sportivi, Patek moderni) dove non c'è margine: lì il prezzo giusto lo sanno tutti.
-${_ency}
+
 ${hasImage ? 'Guarda la FOTO e leggi' : 'Leggi'} questo annuncio e rispondi SOLO con un oggetto JSON, senza testo prima o dopo, senza backtick.
 
 Annuncio: "${title}"
@@ -191,17 +155,12 @@ Rispondi con SOLO questo JSON, niente testo prima o dopo, niente backtick:
   "sellerClueless": true/false (il venditore non sa cosa ha? titolo generico, marca assente/storpiata = segnale d'oro),
   "valueLow": numero EUR (minima mercato attuale) o null,
   "valueHigh": numero EUR (massima attuale) o null,
-  "valueBasis": "una frase BREVE che dice su COSA si basa la stima: la REFERENZA/CALIBRO ESATTI di QUESTO annuncio e i venduti reali comparabili che conosci per QUELLA referenza. NON citare il valore del modello iconico della famiglia se questa referenza è diversa.",
-  "refUncertain": true/false (true se NON sei sicuro che la referenza/modello che hai in mente corrisponda davvero a quello dell'annuncio, o se stai stimando sulla famiglia e non sulla referenza esatta. Nel dubbio METTI true),
   "desirability": 1-10,
   "isGrail": true/false (è un pezzo da sogno per i collezionisti),
   "futureOutlook": "rising/stable/declining (come si muove il valore di QUESTO pezzo nei prossimi 3-5 anni)",
-  "scenarioPessimistico": numero EUR o null (a 5 anni nello scenario PRUDENTE/sfavorevole: nessun catalizzatore, mercato piatto, o piccola difficoltà. Per oro/brand nobile = recuperi grazie al floor metallo; per acciaio comune = circa il prezzo di mercato di oggi, fermo. NON deve quasi mai essere catastrofico: l'orologio di marca ha sempre un compratore),
-  "scenarioBase": numero EUR o null (a 5 anni nello scenario PIÙ PROBABILE. ⚠️ REGOLA CHIAVE: stima la base in modo CONSERVATIVO, più bassa di quanto l'entusiasmo suggerirebbe. La base è lo scenario che si avvera nella MAGGIORANZA dei casi (~65%) SE il pezzo è comprato bene. Se per essere un buon affare il pezzo ha bisogno dello scenario ottimistico, allora NON è comprato bene: tieni la base prudente e lascia che sia il prezzo a dover scendere),
-  "scenarioOttimistico": numero EUR o null (a 5 anni se il motore lavora come previsto: catalizzatore parte, scarsità morde. NON un miracolo — niente code da +300%, quelle non si prezzano. Solo il buon esito atteso),
-  "scenarioBasis": "una frase: su COSA si fonda lo scenario BASE conservativo (comparabili venduti reali, motore presente o assente). Di' apertamente se il pezzo regge SOLO sull'ottimistico (= non è comprato bene a questo prezzo)",
-  "motoreRivalutazione": "quale motore di rivalutazione è ACCESO: melt (floor oro), catalizzatore (rilancio/asta/stampa), liquidita (flusso veloce alta domanda), oppure 'nessuno' (prezzo fermo, magazzino non investimento)",
-  "evRating": "high/medium/low (potenziale di RIVALUTAZIONE a medio termine, come un'azione sottovalutata. ⚠️ Dai high SOLO se lo scenario BASE conservativo già rende il giusto rispetto al prezzo; se serve l'ottimistico per giustificarlo, NON è high)",
+  "futureValueLow": numero EUR (stima minima tra 3-5 anni) o null,
+  "futureValueHigh": numero EUR (stima massima tra 3-5 anni) o null,
+  "evRating": "high/medium/low (potenziale di RIVALUTAZIONE a medio termine, come un'azione sottovalutata)",
   "investmentReasons": "una frase sui fattori che spingono/frenano il valore futuro: traiettoria marchio, rarità/produzione, calibro manifattura, moda collezionisti, importanza storica",
   "strongMarket": "paese/mercato dove QUESTO modello si rivende meglio (es. Italia, Germania, Francia, USA, Giappone, internazionale) o null se indifferente",
   "geoEdgePct": numero (differenza % stimata di prezzo tra il mercato forte e gli altri, es. 15 se nel paese forte vale ~15% in più) o null,
@@ -213,20 +172,12 @@ Rispondi con SOLO questo JSON, niente testo prima o dopo, niente backtick:
 }
 
 Regole:
-- ⛔ REGOLA FONDAMENTALE — VALUTA LA REFERENZA ESATTA, NON LA FAMIGLIA (è la regola che conta più di tutte):
-  Stima valueLow/valueHigh SOLO sulla referenza, modello e calibro EFFETTIVAMENTE scritti nell'annuncio. Una stessa famiglia di nome famoso contiene modelli con valori DIVERSISSIMI: NON applicare il prezzo del modello iconico/vintage a una referenza moderna o diversa.
-  Esempi dell'errore da NON fare MAI:
-  • Breitling Navitimer: il 806 vintage (Venus 178, anni '50-'60, AOPA) vale 5.000-20.000€, MA un A30022 / "Navitimer 92" (calibro automatico B13/B30 base Valjoux 7750, anni '90) vale solo 2.000-3.000€. Sono entrambi "Navitimer" ma 5-10 volte diversi. Se l'annuncio dice A30022, vale come A30022, NON come 806.
-  • IWC: un cal. 89 dress oro vale 1.500-2.800€, NON come un Ingenieur cal. 852/8541 (3.000-12.000€). Se l'annuncio dice "cal. 89", è un cal. 89.
-  • Omega: un Seamaster cal. 552 dress vale meno di uno Speedmaster 321. Non confonderli.
-  Se nell'annuncio c'è una REFERENZA ALFANUMERICA precisa (es. A30022, 14764, 16520) o un CALIBRO preciso (cal. 89, B30, 552), quella è la verità: ancora la stima a QUELLA, non al nome della collezione. Se non sei SICURO della corrispondenza referenza→valore, metti refUncertain=true e allarga/abbassa la stima per prudenza. MEGLIO SOTTOSTIMARE che gonfiare: un falso "affare" fa perdere soldi e figure.
-- In valueBasis scrivi sempre su quali comparabili reali ti basi (referenza + calibro esatti).
 - Se NON è un orologio, isWatch false e confidence low.
 - Premia i marchi sottovalutati di qualità (isSleeper true) e i bei calibri (qualityMovement true): sono il bersaglio.
 - DOPPIA FIRMA = TESORO: se il quadrante porta la firma di un rivenditore (Tiffany, Cartier, Hausmann, Pisa, Cusi, Beyer, Gubelin, Wempe, Serpico y Laino...), il pezzo vale MOLTO di piu del normale, anche se la marca e nota. Alza forte desirability e valueHigh, e spiega il premio nel reasoning.
 - QUADRANTE SPECIALE = VALORE: tropicale, gilt, sector, pie-pan, esotico, salmone, smalto ecc. fanno salire molto il prezzo tra i collezionisti. Tienine conto nella stima e segnalalo.
 - Roba PARTICOLARE e RICERCATA (configurazioni rare, quadranti insoliti, provenienza militare, complicazioni inusuali) vale piu di un pezzo comune: premiala.
-- ANALISI DA INVESTITORE (medio termine 3-5 anni): ragiona come per un'azione. Anche se oggi il prezzo e "giusto" e non c'e sconto, chiediti: questo orologio tra 3-5 anni varra di piu? Considera: il marchio sta salendo tra i collezionisti (es. Universal Geneve, vintage di manifattura, indie) o e fermo/in declino (es. quarzo anonimo, marchi morti senza fascino)? E raro o prodotto in massa? Ha un calibro di manifattura che regge il valore? E gia in trend di crescita? Da questo derivano evRating e i tre scenari (scenarioPessimistico/scenarioBase/scenarioOttimistico — vedi regola 16). Sii realista: la maggior parte degli orologi NON si rivaluta (evRating medium/low). Metti high solo quando lo scenario BASE conservativo gia regge.
+- ANALISI DA INVESTITORE (medio termine 3-5 anni): ragiona come per un'azione. Anche se oggi il prezzo e "giusto" e non c'e sconto, chiediti: questo orologio tra 3-5 anni varra di piu? Considera: il marchio sta salendo tra i collezionisti (es. Universal Geneve, vintage di manifattura, indie) o e fermo/in declino (es. quarzo anonimo, marchi morti senza fascino)? E raro o prodotto in massa? Ha un calibro di manifattura che regge il valore? E gia in trend di crescita? Da questo deriva evRating e le stime futureValue. Sii realista: la maggior parte degli orologi NON si rivaluta (evRating medium/low). Metti high solo quando i fattori sono davvero forti.
 - CRITERI CONCRETI PER evRating HIGH (il precedente che insegna: Universal Geneve, comprata da Breitling nel 2023, i Compax sono raddoppiati/triplicati — chi conosceva i fondamentali ha comprato PRIMA del catalizzatore). Dai evRating high quando vedi ALMENO DUE di questi: (a) calibro a ruota di colonne o manifattura propria sotto un nome che il mercato non prezza (es. Excelsior Park, Gallet, Wittnauer Valjoux 72 = stesso motore degli Heuer a un terzo del prezzo); (b) marchio morto o appena rilanciato con storia documentata, archivi e community (es. Nivada, Vulcain, Aquastar, Airain: la riedizione fa pubblicita agli originali); (c) famiglia di modelli dove il capofamiglia e gia esploso e i fratelli no (es. Enicar: Sherpa Graph esploso, Super Divette/Jet/Guide ancora fermi); (d) flottante stretto (produzione minuscola, pochi esemplari in vendita); (e) pavimento di valore (oro 18k vicino al melt, o acciaio sportivo molto richiesto); (f) neo-vintage 1985-2000 con calibro giusto, comprato finche e "solo usato" e non ancora "collezione". Dai invece evRating LOW quando: prezzo gia salito piu del 100% in 2 anni senza nuovo catalizzatore (sei in cima), mercato di una sola generazione anziana, o pezzo non originale (redial/lucidato/franken: l'investimento richiede originalita, sempre).
 - ROTTO/NON FUNZIONANTE NON è un problema: un orologio di qualità rotto e venduto a poco è un'OCCASIONE (si rivende per pezzi o si fa riparare). Mettilo in working=false ma NON tra i redFlags, e tienine conto abbassando un po' la stima di valore (un pezzo fermo vale meno di uno funzionante, ma vale).
 - REGOLE IMPARATE SUL CAMPO (applicale SEMPRE, sono le cose che fanno perdere o guadagnare soldi davvero):
@@ -246,35 +197,98 @@ Regole:
 - 13) COMPLICAZIONI: il valore sta nell'ESECUZIONE, non nella funzione. PREMIA: ora saltante/jump hour d'epoca o d'autore, seconde morte/jumping seconds (calibro Chézard 115/116 anni 50 anche su Doxa & co. = sleeper vintage prezioso, segnalalo SEMPRE), Crazy Hours Franck Muller, UN Freak originale, tourbillon SOLO se di manifattura vera con finitura alta. TRAPPOLA: "tourbillon" sotto i 1500 euro = movimento cinese, ZERO valore di rivendita, redFlags. Su ogni complicato ricorda nel reasoning il costo del servizio (rattrapante/ripetizioni/Freak = 2000-5000+ euro solo in casa madre).
 - 14) MERCATO FORTE (arbitraggio geografico): certi modelli si rivendono MEGLIO in un paese che in un altro per gusto e storia locale. Stima strongMarket, geoEdgePct e geoNote SOLO quando hai un motivo concreto; altrimenti metti null (la maggior parte dei pezzi non ha un vero edge geografico: non inventarlo). Esempi del fenomeno: cronografi e dress svizzeri venduti in Italia all'epoca (doppie firme italiane Hausmann/Cusi/Pisa, "cassa nazionale") → più richiesti in ITALIA; orologi tedeschi (Glashütte, Junghans crono, Stowa, Sinn) e militari Bund → mercato caldo in GERMANIA; militari francesi (type 20: Airain, Dodane, Auricoste), LIP, Yema → FRANCIA; diver e crono americani anni 60-70 e Bulova/Hamilton US → USA; Seiko/Citizen JDM e King/Grand Seiko vintage → GIAPPONE. È SOLO un'informazione di contesto su dove monetizzi meglio: NON deve cambiare valueLow/valueHigh né far scattare un affare. L'affare resta tale solo per prezzo vs mercato.
 - 15) CICLO DEL SEGMENTO (leggi il mercato, non solo il pezzo): i segmenti hanno cicli. Oggi (dato 2026, può cambiare): ORO DRESS / crono di manifattura in oro anni 50-60 = ciclo IN SALITA, costante, ancora sottovalutati (Longines 30CH, crono oro Zenith): su orizzonte 3-5 anni è il profilo migliore, doppio fondamentale orologio+oro. ACCIAIO SPORTIVO / diver-chrono vintage = ciclo MATURO: ha corso fino al picco 2021-22 e poi corretto, molti pezzi sono già al massimo del ciclo (ottima liquidità, ma upside futuro più limitato). Tienine conto in evRating/futureOutlook: a parità di pezzo, un crono oro dress sottovalutato ha traiettoria migliore di un diver-chrono acciaio già esploso. NON è un gate, è lettura di contesto.
-- ${hasImage ? 'Basa il giudizio sulla foto oltre che sul titolo.' : 'Vedi solo il titolo: sii prudente nelle stime.'}
-- 16) RAGIONA DA INVESTITORE / PORTAFOGLIO (regola che governa scenari ed evRating): valuti come un'azione, non come una singola scommessa. Tre scenari a 5 anni — pessimistico / BASE / ottimistico — e la BASE è quella che pesa (~65% dei casi SE comprato bene). Principi: (a) la BASE va tenuta CONSERVATIVA, sotto l'entusiasmo: è la conseguenza meccanica del comprare bene, non una speranza. (b) NON prezzare le code: né il +300% miracoloso né il disastro — sulla lunga si annullano, decidi sul centro. (c) Il filtro decisivo: un pezzo è un buon affare SOLO se rende il giusto già nello scenario BASE conservativo; se "funziona" solo nell'ottimistico, vuol dire che NON è comprato bene a quel prezzo → evRating basso e nel reasoning di' che serve uno sconto. (d) Questo NON penalizza l'acciaio: un acciaio col MOTORE acceso (catalizzatore/liquidità) comprato a prezzo onesto regge benissimo la base → può essere high. Quello che resta fuori è il pezzo SENZA motore pagato pieno (base piatta = magazzino, non investimento), oro o acciaio che sia. (e) L'upside oltre la base, se il lavoro è fatto bene (studio, comparabili, dial verificato), è un BONUS gratis non prezzato: meglio sotto-promettere.`;
+- ${hasImage ? 'Basa il giudizio sulla foto oltre che sul titolo.' : 'Vedi solo il titolo: sii prudente nelle stime.'}`;
 
-  // ── CHIAMATA AL MOTORE UNICO (Gemini→Groq). Se c'è foto usa la vision
-  //    (Gemini multimodale), altrimenti l'analisi testuale. Il motore gestisce
-  //    da sé throttle, fallback e retry sul 429. ──
+  // Costruisci il messaggio: testo + eventuale immagine
+  let content;
+  if (hasImage) {
+    content = [
+      { type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.base64 } },
+      { type: 'text', text: prompt },
+    ];
+  } else {
+    content = prompt;
+  }
+
   try {
     usage.count++;
-    let text;
-    if (hasImage) {
-      text = await visionEngine.visionComplete(imageUrl, prompt, { maxTokens: 1200, temperature: 0.2, jsonMode: true, skipClaude: _skipClaude });
-    } else {
-      text = await visionEngine.textComplete(prompt, { maxTokens: 1200, temperature: 0.2, jsonMode: true, skipClaude: _skipClaude });
-    }
-    if (!text) { console.error('[CLAUDE] Nessuna risposta dal motore AI (Gemini+Groq falliti)'); return null; }
+    const r = await axios.post(API_URL, {
+      model: MODEL,
+      max_tokens: 1200,
+      temperature: 0.2,
+      response_format: { type: 'json_object' }, // JSON mode (Groq lo supporta sui Llama)
+      messages: [{ role: 'user', content }],
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      timeout: 30000,
+    });
 
-    const parsed = visionEngine.parseJsonLoose(text);
-    if (!parsed) { console.error('[CLAUDE] Risposta non JSON:', text.slice(0, 120)); return null; }
+    // Groq usa il formato OpenAI: la risposta sta in choices[0].message.content
+    let text = r.data.choices?.[0]?.message?.content || '';
+    // Rimuovi markdown e spazi
+    text = text.replace(/```json|```/g, '').trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Claude a volte aggiunge testo prima/dopo il JSON — tentiamo di estrarlo
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { parsed = JSON.parse(match[0]); }
+        catch { console.error('[CLAUDE] Risposta non JSON recuperabile:', text.slice(0, 120)); return null; }
+      } else {
+        console.error('[CLAUDE] Risposta non JSON:', text.slice(0, 120));
+        return null;
+      }
+    }
 
     parsed.sawImage = hasImage;
-    parsed._title = title; // serve alla guardia referenza in evaluateWithPrice
     if (cache.size >= CACHE_MAX) { cache.clear(); }
     cache.set(key, parsed);
 
     return evaluateWithPrice(parsed, priceEur);
   } catch (e) {
-    console.error('[CLAUDE] Errore analisi:', e.message);
-    return null;
+    const status = e.response?.status;
+    const body = JSON.stringify(e.response?.data || '').slice(0, 300);
+    if (status === 401) console.error('[GROQ] Chiave non valida (401) — controlla GROQ_API_KEY su Render');
+    else if (status === 429) console.error('[GROQ] Limite piano gratis raggiunto (429): l\'AI riprende dopo il reset. L\'oro continua a girare gratis.');
+    else console.error('[GROQ]', status ? `${status}: ${body}` : e.message);
+
+    // ── GATE STIMA: credito esaurito / quota / auth = NESSUNA VALUTAZIONE ──
+    // Una stima prodotta senza il modello non è "più rumorosa": è priva di
+    // segnale. Pubblicare una % in questo stato ha valore atteso NEGATIVO,
+    // perché ti fa muovere capitale su un numero arbitrario e ti abitua a
+    // diffidare anche degli alert buoni. Segnaliamo lo stato in modo
+    // esplicito così il chiamante non può inventarsi percentuali.
+    lastEstimateFailure = {
+      ts: Date.now(),
+      status: status || null,
+      reason: /credit balance|too low|insufficient|quota|billing/i.test(body) ? 'credito esaurito'
+            : status === 429 ? 'limite richieste'
+            : status === 401 ? 'chiave non valida'
+            : 'errore API',
+    };
+    return { estimateUnavailable: true, isInteresting: false, priceEur,
+             estimateFailReason: lastEstimateFailure.reason };
   }
+}
+
+// Stato dell'ultimo fallimento stima: usalo negli alert per scrivere
+// "stima non disponibile" invece di una percentuale inventata.
+let lastEstimateFailure = null;
+function estimateHealth() {
+  if (!lastEstimateFailure) return { ok: true };
+  const ageMin = Math.round((Date.now() - lastEstimateFailure.ts) / 60000);
+  return { ok: false, reason: lastEstimateFailure.reason, status: lastEstimateFailure.status, ageMin };
+}
+// Riga pronta per Telegram quando la stima non c'è.
+function estimateUnavailableLine(reason) {
+  return `\n\u26A0\uFE0F <b>STIMA NON DISPONIBILE</b> (${reason || 'AI offline'})\n` +
+         `Nessuna percentuale mostrata: senza il modello il numero sarebbe inventato.\n` +
+         `Valuta a mano — l'oro e i venduti reali continuano a funzionare.\n`;
 }
 
 // Helper: nessun campanello d'allarme (usato anche prima del calcolo completo).
@@ -313,22 +327,7 @@ function evaluateWithPrice(analysis, priceEur) {
   const midrange = brandWatchlist.isMidrange(analysis.brand);
   out.modernIndie = modernIndie;
   out.midrange = midrange;
-
-  // RESCUE GREZZO (strozzatura B): un pezzo ECONOMICO con un CALIBRO DI QUALITÀ
-  // riconosciuto (Valjoux/Venus/Lemania/Landeron/manifattura, o qualityMovement)
-  // merita il tuo occhio ANCHE se l'AI non è riuscita a confermare "vintage" da
-  // un titolo generico (il prompt pretende 2+ segnali d'epoca → l'annuncio
-  // dell'ignorante li manca quasi sempre). Segnale STRETTO di proposito: il
-  // fashion / quarzo moderno NON ha un calibro così → resta fuori, gli scarti
-  // restano puliti. Così i grezzi non muoiono qui sotto prima della rete.
-  const _grezzoCap = parseInt(process.env.FLIP_GREZZO_MAX || '600');
-  const grezzoForte =
-    priceEur > 0 && priceEur <= _grezzoCap &&
-    senzaAllarmiGraviGrezzo(analysis) &&
-    (!!analysis.qualityMovement ||
-     /ruota a colonn|column wheel|valjoux|venus|landeron|lemania|manufacture|manifattura/i.test(String(analysis.caliber||'') + ' ' + String(analysis.reasoning||'')));
-
-  if (analysis.isVintage === false && !modernIndie && !midrange && !grezzoForte) { out.isInteresting = false; out.notVintage = true; return out; }
+  if (analysis.isVintage === false && !modernIndie && !midrange) { out.isInteresting = false; out.notVintage = true; return out; }
 
   // ── CANALE "🔧 FLIP GREZZO" (fascia bassa, scelta di Leonardo: rumoroso) ──
   // Il flip vero a 200-400€ nasce dal pezzo OSCURO/mal fotografato che l'AI
@@ -337,7 +336,7 @@ function evaluateWithPrice(analysis, priceEur) {
   // l'oscurità, lo mando lo stesso come "DA VERIFICARE TU" — meglio vederne
   // troppi e scartarli a mano che perdere l'affare grezzo. Filosofia: a fascia
   // bassa il volume batte la selezione, l'occhio finale è il tuo.
-  const FLIP_GREZZO_MAX = parseInt(process.env.FLIP_GREZZO_MAX || '600');
+  const FLIP_GREZZO_MAX = parseInt(process.env.FLIP_GREZZO_MAX || '400');
   const segnaliQualitaGrezzo =
     !!analysis.qualityMovement ||
     /ruota a colonn|column wheel|valjoux|venus|landeron|lemania|manufacture|manifattura/i.test(String(analysis.caliber||'') + ' ' + String(analysis.reasoning||'')) ||
@@ -347,7 +346,7 @@ function evaluateWithPrice(analysis, priceEur) {
   const flipGrezzo =
     priceEur > 0 && priceEur <= FLIP_GREZZO_MAX &&
     analysis.isWatch !== false &&
-    (analysis.isVintage !== false || grezzoForte) &&
+    analysis.isVintage !== false &&
     senzaAllarmiGraviGrezzo(analysis) &&
     segnaliQualitaGrezzo;
 
@@ -380,39 +379,44 @@ function evaluateWithPrice(analysis, priceEur) {
     return out;
   }
 
-  const discountVsLow = Math.round(((analysis.valueLow - priceEur) / analysis.valueLow) * 100);
-  const marginEur = analysis.valueLow - priceEur; // guadagno potenziale minimo
+  // ── FLOOR METALLO: su un pezzo d'oro il confronto va fatto sui PREMI ──
+  // Un Eberhard oro 18k con 13,6 g di cassa ha ~1.150€ di metallo: quella
+  // parte del prezzo NON è rischio, è capitale recuperabile. Confrontare il
+  // prezzo PIENO con la stima piena schiaccia insieme due cose diverse e
+  // produce falsi "sopra/sotto stima" enormi. Il floor tronca la coda
+  // sinistra della distribuzione dei rendimenti: va prezzato esplicitamente,
+  // non ignorato. meltEur arriva da metalsDatabase SOLO se il metallo è
+  // confermato (peso noto): sulle stime generiche non si applica.
+  const meltEur = Number(analysis.meltValueEur || 0);
+  const floorUsabile = meltEur > 0 && analysis.valueLow > meltEur * 1.15;
+
+  let discountVsLow, marginEur;
+  if (floorUsabile) {
+    const premiumAsk = priceEur - meltEur;          // quanto paghi l'orologio
+    const premiumLow = analysis.valueLow - meltEur; // quanto vale l'orologio
+    discountVsLow = premiumLow > 0 ? Math.round(((premiumLow - premiumAsk) / premiumLow) * 100) : 0;
+    marginEur = Math.round(premiumLow - premiumAsk);
+    out.goldFloored  = true;
+    out.meltEur      = Math.round(meltEur);
+    out.premiumAsk   = Math.round(premiumAsk);
+    out.premiumLow   = Math.round(premiumLow);
+    // PERDITA MASSIMA liquidando a fuso (80% dello spot, realistico da
+    // compro-oro). È la metrica che dice quanto capitale rischi davvero.
+    out.downsideEur  = Math.round(meltEur * 0.80 - priceEur);
+    out.floorLine    = `\u{1F3F7}\uFE0F Fuso ~\u20AC${Math.round(meltEur).toLocaleString('it-IT')} \u00B7 ` +
+                       `paghi l'orologio \u20AC${Math.round(premiumAsk).toLocaleString('it-IT')} ` +
+                       `(vale ~\u20AC${Math.round(premiumLow).toLocaleString('it-IT')})\n` +
+                       `\u{1F6E1}\uFE0F Perdita max a fuso: \u20AC${Math.abs(Math.round(meltEur*0.80 - priceEur)).toLocaleString('it-IT')}\n`;
+  } else {
+    discountVsLow = Math.round(((analysis.valueLow - priceEur) / analysis.valueLow) * 100);
+    marginEur = analysis.valueLow - priceEur; // guadagno potenziale minimo
+    out.goldFloored = false;
+  }
+
   out.discountVsLow = discountVsLow;
   out.marginEur = marginEur;
   out.isDeal = priceEur < analysis.valueLow;
   out.isGoodDeal = priceEur < analysis.valueLow * 0.85;
-
-  // ── GUARDIA REFERENZA INCERTA (anti-figuraccia) ──────────────────────────
-  // Causa nº1 dei falsi "affare": l'AI stima sul modello ICONICO della famiglia
-  // (Navitimer 806, IWC Ingenieur...) mentre l'annuncio è una referenza diversa
-  // e più economica (A30022, cal.89...). Se l'AI ha segnalato refUncertain, NON
-  // dichiariamo l'affare sulla base di quello sconto: il pezzo passa SOLO come
-  // "DA VERIFICARE" con avviso esplicito, mai come occasione sotto-prezzo.
-  // Inoltre: se nel TITOLO c'è una referenza alfanumerica precisa ma lo sconto
-  // stimato è enorme (>40%), trattiamo la stima come inaffidabile per prudenza.
-  const refInTitle = /\b([a-z]{1,3}\s?\d{4,6}|ref\.?\s?\d{3,6})\b/i.test(String(analysis._title || out.title || ''));
-  const scontoSospetto = discountVsLow >= 40;
-  out.refUncertain = analysis.refUncertain === true;
-  if (analysis.refUncertain === true || (refInTitle && scontoSospetto)) {
-    out.isInteresting = true;
-    out.isFlipGrezzo = false;
-    out.refCheck = true;            // flag per un alert dedicato "verifica referenza"
-    out.isDeal = false;             // NON è un affare confermato
-    out.isGoodDeal = false;
-    out.dealStrength = 'VERIFICA';
-    out.marketCycleLine = marketCycles.contextLine({ brand: analysis.brand, material: analysis.material, type: [analysis.model, analysis.caliber].filter(Boolean).join(' ') });
-    out.reasoning = (analysis.reasoning ? analysis.reasoning + ' ' : '') +
-      `⚠️ STIMA NON CONFERMATA: il valore (${analysis.valueLow}-${analysis.valueHigh}€) potrebbe riferirsi a un modello diverso della stessa famiglia. ` +
-      (analysis.valueBasis ? `Base stima: ${analysis.valueBasis}. ` : '') +
-      `Verifica la REFERENZA esatta (${analysis.model || '?'}) e il CALIBRO (${analysis.caliber || '?'}) prima di considerarlo un affare: NON fidarti dello sconto mostrato.`;
-    return out;
-  }
-  // ─────────────────────────────────────────────────────────────────────────
 
   const idAffidabile = analysis.confidence === 'high' || analysis.confidence === 'medium';
   const senzaAllarmi = !analysis.redFlags || analysis.redFlags === 'null' || analysis.redFlags === null;
@@ -437,18 +441,8 @@ function evaluateWithPrice(analysis, priceEur) {
   } else {
     margineForte = discountVsLow >= (35 - softening) || (marginEur >= 600 && discountVsLow >= 25);
   }
+  const grailScontato = analysis.isGrail && discountVsLow >= 20;
   const tier = analysis.sleeperTier || 0;
-
-  // GUARDIA MODERNO CELEBRATIVO: un pezzo di marchio famoso con segnali da
-  // edizione moderna celebrativa/limitata (anniversary, limited edition,
-  // riedizione, "80th"...) NON è un grail vintage. Era il buco che ha fatto
-  // passare la Carrera "Jack Heuer 80th" a €2.800 come OCCASIONE: l'AI le dava
-  // un valore gonfiato + isGrail e scattava grailScontato scavalcando le regole
-  // sui moderni. Qui lo blocco a valle, in codice (il prompt è ignorabile).
-  const modernCelebrativo = /\b(anniversary|anniversario|jubil[eé]|limited edition|edizione limitata|re-?edition|reissue|riedizione|special edition|\d{2,3}\s*(st|nd|rd|th)\s*ann)\b/i
-    .test(`${analysis.brand||''} ${analysis.model||''} ${analysis.reasoning||''}`);
-
-  const grailScontato = analysis.isGrail && discountVsLow >= 20 && !modernCelebrativo;
   const sleeperDiQualita = tier >= 1 && (analysis.isSleeper || analysis.qualityMovement) && discountVsLow >= 15 && marginEur >= 50;
   const venditoreIgnaro = analysis.sellerClueless && tier >= 2 && marginEur >= 100;
   const tesoroOscuro = tier >= 3 && discountVsLow >= 10 && marginEur >= 50;
@@ -540,17 +534,10 @@ function evaluateWithPrice(analysis, priceEur) {
   // studiare — entrano SOLO dai canali affare (margineForte & co.).
   const studyBrand = (brandWatchlist.isStudyBrand(analysis.brand) || modernIndie) && !midrange;
   const marketCap = analysis.valueHigh || analysis.valueLow;
-  // I BEN NOTI già quotati (i "soliti Omega/Longines/IWC" comuni: tier 0, non
-  // sleeper, non indie) NON passano più a prezzo pieno dal canale DA STUDIARE:
-  // li mando solo se c'è uno sconto reale o un angolo speciale. Gli SCONOSCIUTI
-  // di qualità (tier ≥ 1 / sleeper / indie) restano studiabili anche a prezzo
-  // ≤ mercato → il feed si riempie di oscuri, non dei noti già prezzati.
-  const benNoto = (analysis.sleeperTier||0) === 0 && !analysis.isSleeper && !modernIndie;
-  const studyNotoOk = !benNoto || discountVsLow >= 15 || analysis.qualityMovement || haDoppiaFirma || haQuadranteSpeciale;
-  const studyPick = studyBrand && idAffidabile && senzaAllarmi && priceEur <= marketCap && studyNotoOk;
+  const studyPick = studyBrand && idAffidabile && senzaAllarmi && priceEur <= marketCap;
   out.studyPick = !!studyPick;
 
-  const affareVero = idAffidabile && senzaAllarmi && !modernCelebrativo &&
+  const affareVero = idAffidabile && senzaAllarmi &&
     (margineForte || grailScontato || sleeperDiQualita || venditoreIgnaro || tesoroOscuro || pezzoParticolare || investimento);
 
   out.isInteresting = affareVero || out.studyPick || out.investorPick;
@@ -571,19 +558,12 @@ function evaluateWithPrice(analysis, priceEur) {
     out.doubleSigned = haDoppiaFirma ? analysis.doubleSigned : null;
     out.specialDial = haQuadranteSpeciale ? analysis.specialDial : null;
     out.futureOutlook = analysis.futureOutlook || null;
-    // Modello a 3 scenari (base dominante e conservativa)
-    out.scenarioPessimistico = analysis.scenarioPessimistico || null;
-    out.scenarioBase = analysis.scenarioBase || null;
-    out.scenarioOttimistico = analysis.scenarioOttimistico || null;
-    out.scenarioBasis = analysis.scenarioBasis || null;
-    out.motoreRivalutazione = analysis.motoreRivalutazione || null;
-    // Retrocompat: i vecchi campi puntano agli estremi degli scenari
-    out.futureValueLow = analysis.scenarioPessimistico || null;
-    out.futureValueHigh = analysis.scenarioOttimistico || null;
+    out.futureValueLow = analysis.futureValueLow || null;
+    out.futureValueHigh = analysis.futureValueHigh || null;
     out.evRating = analysis.evRating || null;
     out.investmentReasons = analysis.investmentReasons || null;
   }
   return out;
 }
 
-module.exports = { analyzeListing, isConfigured, getUsage };
+module.exports = { analyzeListing, isConfigured, getUsage, estimateHealth, estimateUnavailableLine };

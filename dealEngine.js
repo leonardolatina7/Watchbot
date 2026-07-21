@@ -86,7 +86,12 @@ function relativeUnderprice(brand, model, price, minPct = 18) {
   const k = keyOf(brand, model);
   const cutoff = Date.now() - WINDOW_DAYS * 864e5;
   const prices = (priceHistory[k] || []).filter(p => p.ts >= cutoff).map(p => p.price);
-  if (prices.length < 4) return { below: false, enoughData: false };
+  // MIN 8 (era 4). Motivo statistico: l'errore standard della mediana è
+  // ~1.25*sigma/sqrt(n). Con n=4 vale 0.63*sigma, cioè un "-20% sotto la
+  // mediana" cade dentro il rumore e produce falsi affari a raffica. Con n=8
+  // scende a 0.44*sigma e il segnale inizia a superare il rumore.
+  const MIN_N = parseInt(process.env.DEALENGINE_MIN_N || '8');
+  if (prices.length < MIN_N) return { below: false, enoughData: false, sampleSize: prices.length };
   const med = median(prices);
   if (!med) return { below: false, enoughData: false };
   const vsPct = Math.round(((med - price) / med) * 100); // positivo = sotto la mediana
@@ -213,32 +218,6 @@ function buildInsightLines({ brand, model, priceEur, marginEur, evRating, sleepe
   return { lines: out, resaleDays, efficiency: eff, classe: cls, relative: rel };
 }
 
-// ── PERSISTENZA SU GIST (v12.34): prima la borsa-mediane viveva solo su file
-//    locale (che su Render senza disco persistente si azzera a ogni deploy).
-//    index.js ora la include nel backup watchbot-history.json sul Gist.
-//    importData fa MERGE (non sovrascrive): se il disco persistente ha già
-//    dati più freschi caricati al require, si uniscono per chiave e si ripulisce
-//    per finestra temporale — mai perdere osservazioni buone. ──
-function exportData() {
-  return { priceHistory };
-}
-function importData(data) {
-  if (!data || typeof data.priceHistory !== 'object') return 'nulla da ripristinare';
-  const cutoff = Date.now() - WINDOW_DAYS * 864e5;
-  let merged = 0;
-  for (const [k, arr] of Object.entries(data.priceHistory)) {
-    if (!Array.isArray(arr)) continue;
-    const cur = priceHistory[k] || [];
-    const seen = new Set(cur.map(p => p.ts));
-    for (const p of arr) {
-      if (p && p.ts >= cutoff && !seen.has(p.ts)) { cur.push(p); merged++; }
-    }
-    if (cur.length) priceHistory[k] = cur.sort((a, b) => a.ts - b.ts);
-  }
-  persist();
-  return `${Object.keys(priceHistory).length} modelli in dealEngine (+${merged} osservazioni dal backup)`;
-}
-
 module.exports = {
   recordPrice,
   seenCount,
@@ -248,6 +227,4 @@ module.exports = {
   classifyDeal,
   buildInsightLines,
   median,
-  exportData,
-  importData,
 };
