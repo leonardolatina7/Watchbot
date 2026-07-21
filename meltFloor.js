@@ -381,11 +381,96 @@ function formattaRichiestePeso(lotti) {
   return righe.join('\n');
 }
 
+
+// ---------------------------------------------------------------------------
+// 8. INDIE RATIO — segnale per indipendenti ultra-nicchia.
+//    Su questi marchi il prezzo assoluto non dice nulla: conta il RAPPORTO
+//    tra prezzo chiesto e listino di riferimento. I realizzi reali stanno
+//    al 25-40% del nuovo perche' il mercato secondario e' sottilissimo.
+// ---------------------------------------------------------------------------
+
+const INDIE = [
+  // Rudis Sylva (Les Bois, Giura). Harmonious Oscillator, due bilancieri dentati.
+  // RS12: listino 250.000 CHF. Realizzo Phillips maggio 2024: $77.060 (sotto stima bassa).
+  // Rapporto realizzo/listino ~30%.
+  { match: /rudis\s?sylva/i, listino: 250000, valuta: 'CHF', realizzoTipico: 0.30,
+    nota: 'RS12 listino 250k CHF, martello Phillips 2024 $77.060. RS23: 80k CHF titanio, 90k CHF oro rosa.' },
+
+  // Placeholder per gli altri del tuo radar — listini da inserire man mano.
+  { match: /(voutilainen|akrivia|rexhep)/i, listino: null, valuta: 'CHF', realizzoTipico: 0.90,
+    nota: 'Eccezione: questi mantengono o superano il listino. Rapporto alto NON e\' un allarme.' },
+  { match: /(pikullik|aubert.*ramel|suhanov)/i, listino: null, valuta: 'EUR', realizzoTipico: 0.55,
+    nota: 'Indie emergenti: secondario poco liquido, sconto tipico 40-50%.' }
+];
+
+function indieRatio(lottoRaw) {
+  const l = normalizza(lottoRaw);
+  const testo = [l.brand, l.ref, l.titolo].filter(Boolean).join(' ');
+
+  for (const i of INDIE) {
+    if (!i.match.test(testo)) continue;
+
+    const prezzo = l.stimaBassa ?? l.prezzo;
+    if (!prezzo) return { indie: true, marchio: testo, motivo: 'nessun prezzo', nota: i.nota };
+
+    if (!i.listino) {
+      return { indie: true, marchio: testo, prezzo, listinoNoto: false,
+               realizzoTipico: i.realizzoTipico, nota: i.nota,
+               azione: 'Listino non in tabella: cerca il realizzo asta piu\' recente prima di offrire.' };
+    }
+
+    const ratio = prezzo / i.listino;
+    const sogliaInteresse = i.realizzoTipico * 0.70; // 30% sotto il realizzo tipico
+    const sogliaCaro      = i.realizzoTipico * 1.15;
+
+    let verdetto;
+    if (ratio <= sogliaInteresse) verdetto = 'INTERESSANTE — sotto il realizzo tipico';
+    else if (ratio >= sogliaCaro) verdetto = 'CARO — sopra quanto realizza davvero';
+    else verdetto = 'IN LINEA — nessun edge';
+
+    return {
+      indie: true,
+      marchio: testo,
+      prezzo,
+      listino: i.listino,
+      valuta: i.valuta,
+      ratio: +ratio.toFixed(2),
+      realizzoTipico: i.realizzoTipico,
+      massimoDaPagare: Math.round(i.listino * sogliaInteresse),
+      verdetto,
+      alert: ratio <= sogliaInteresse,
+      nota: i.nota
+    };
+  }
+  return { indie: false };
+}
+
+function formattaIndie(r) {
+  const righe = [
+    `${r.alert ? '💎 INDIE EDGE' : '📘 INDIE'} — ${r.marchio}`,
+    ``,
+    `Prezzo: ${r.prezzo}`,
+    r.listino ? `Listino nuovo: ${r.listino} ${r.valuta} → rapporto ${r.ratio}` : `Listino non in tabella.`,
+    r.realizzoTipico ? `Realizzo tipico su questo marchio: ${Math.round(r.realizzoTipico * 100)}% del listino` : '',
+    r.massimoDaPagare ? `Massimo da pagare per avere edge: ${r.massimoDaPagare} ${r.valuta}` : '',
+    r.verdetto ? `` : '',
+    r.verdetto || r.azione || '',
+    ``,
+    `Nota: ${r.nota}`,
+    ``,
+    `⚠️ Segmento illiquido. Tempi di rivendita 12-24 mesi.`
+  ].filter(x => x !== '');
+  return righe.join('\n');
+}
+
 module.exports = {
   scan,
   valutaLotto,
   formatta,
   formattaRichiestePeso,
+  indieRatio,
+  formattaIndie,
+  INDIE,
   normalizza,
   allIn,
   massimoMartello,
