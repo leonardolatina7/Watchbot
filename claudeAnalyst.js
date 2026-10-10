@@ -42,7 +42,17 @@ const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // ── Tetto morbido analisi/giorno (il piano gratis Groq limita anche i TOKEN
 // al giorno: se si tocca il limite, un 429 mette in pausa l'AI fino al reset
 // — l'oro intanto continua a girare). Alzalo/abbassalo con GROQ_DAILY_LIMIT. ──
-const DAILY_LIMIT = parseInt(process.env.GROQ_DAILY_LIMIT || '300');
+// v12.36: gpt-oss-120b gratis = 30 richieste/min, 8K token/min, 200K token/giorno.
+// Ogni analisi pesa ~5K token (prompt lungo + risposta) → ~40 analisi/giorno reali.
+const DAILY_LIMIT = parseInt(process.env.GROQ_DAILY_LIMIT || '40');
+// ── ANTI-429 (v12.36): distanza minima tra chiamate + pausa dopo un 429.
+//    Prima lo scan sparava decine di chiamate in un secondo: la prima passava,
+//    tutte le altre morivano in 429 e intasavano i log. ──
+const MIN_GAP_MS = parseInt(process.env.GROQ_MIN_GAP_MS || '40000'); // ~1,5 analisi/min sta sotto 8K TPM
+let lastCallAt = 0;
+let coolUntil = 0;
+let coolLogged = false;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 let usage = { day: new Date().getDate(), count: 0 };
 function quotaOk() {
   const d = new Date().getDate();
@@ -215,6 +225,17 @@ Regole:
     content = prompt;
   }
 
+  // Pausa post-429: salto silenzioso (un solo log per pausa)
+  if (Date.now() < coolUntil) {
+    if (!coolLogged) { console.log(`[GROQ] in pausa anti-429 fino alle ${new Date(coolUntil).toISOString().slice(11,19)} UTC`); coolLogged = true; }
+    return null;
+  }
+  // Distanza minima: aspetto se serve, ma mai più di 45s (lo scan orario deve finire)
+  const _wait = lastCallAt + MIN_GAP_MS - Date.now();
+  if (_wait > 45000) return null;
+  if (_wait > 0) await sleep(_wait);
+  lastCallAt = Date.now();
+
   try {
     usage.count++;
     const r = await axios.post(API_URL, {
@@ -260,7 +281,12 @@ Regole:
     const status = e.response?.status;
     const body = JSON.stringify(e.response?.data || '').slice(0, 300);
     if (status === 401) console.error('[GROQ] Chiave non valida (401) — controlla GROQ_API_KEY su Render');
-    else if (status === 429) console.error('[GROQ] Limite piano gratis raggiunto (429): l\'AI riprende dopo il reset. L\'oro continua a girare gratis.');
+    else if (status === 429) {
+      const ra = parseFloat(e.response?.headers?.['retry-after'] || '60');
+      coolUntil = Date.now() + Math.min(Math.max(ra, 20), 3600) * 1000;
+      coolLogged = false;
+      console.error(`[GROQ] 429 limite gratis: pausa ${Math.round((coolUntil - Date.now())/1000)}s. L'oro continua a girare gratis.`);
+    }
     else console.error('[GROQ]', status ? `${status}: ${body}` : e.message);
 
     // ── GATE STIMA: credito esaurito / quota / auth = NESSUNA VALUTAZIONE ──
