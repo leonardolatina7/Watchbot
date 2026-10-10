@@ -30,6 +30,17 @@ const cron = require('node-cron');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+// ── INTERRUTTORE GENERALE ──────────────────────────────────
+// BOT_ENABLED=false su Render → il bot resta acceso ma muto: nessuna scansione,
+// nessun messaggio Telegram, nessun cron. Risponde solo sulla porta per tenere
+// vivo il servizio. Per riaccenderlo: BOT_ENABLED=true (o cancella la variabile).
+if (String(process.env.BOT_ENABLED || 'true').trim().toLowerCase() === 'false') {
+  const _off = express();
+  _off.get('*', (_req, res) => res.send('Watchbot in pausa (BOT_ENABLED=false)'));
+  _off.listen(process.env.PORT || 3001, '0.0.0.0', () => console.log('[OFF] Watchbot in pausa: BOT_ENABLED=false'));
+  return;
+}
+
 // ── DIAGNOSI CRASH: logga in chiaro qualsiasi errore non gestito all'avvio o a
 //    runtime, invece di morire in silenzio con "status 1". Se qualcosa va storto
 //    nei log Render comparirà la riga esatta con [CRASH].
