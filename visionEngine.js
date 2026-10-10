@@ -23,7 +23,7 @@
 //    GEMINI_MODEL          default 'gemini-2.0-flash'
 //    GROQ_API_KEY          chiave Groq (fallback testo + vision)
 //    GROQ_MODEL            default 'openai/gpt-oss-120b'          (testo)
-//    GROQ_VISION_MODEL     default 'meta-llama/llama-4-scout-17b-16e-instruct' (vision)
+//    GROQ_VISION_MODEL     default 'qwen/qwen3.8-27b' (vision)
 //    AI_MIN_INTERVAL_MS    distanza minima tra chiamate (anti-429), default 1200
 // ============================================================================
 const axios = require('axios');
@@ -71,8 +71,13 @@ function sanitizeGeminiEnv(v) {
 }
 const GEMINI_MODEL = sanitizeGeminiEnv(process.env.GEMINI_MODEL) || 'gemini-2.5-flash';
 // GROQ_KEY è ora un getter globale (vedi sopra): niente const qui.
-const GROQ_MODEL   = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
-const GROQ_VISION  = process.env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
+// v12.36 — modelli Groq RITIRATI (deprecations Groq: llama-3.x il 16/08/26,
+// llama-4-scout il 17/07/26, qwen3.6/qwen3-32b): danno 404 model_not_found.
+// Se l'env su Render punta ancora a uno di questi, viene sostituito qui.
+const GROQ_DEAD = /llama-3\.|llama3|llama-4|qwen3-32b|qwen3\.6|kimi-k2|groq\/compound/i;
+function groqModel(envVal, fallback) { return (envVal && !GROQ_DEAD.test(envVal)) ? envVal : fallback; }
+const GROQ_MODEL   = groqModel(process.env.GROQ_MODEL, 'openai/gpt-oss-120b');
+const GROQ_VISION  = groqModel(process.env.GROQ_VISION_MODEL, 'qwen/qwen3.8-27b');
 
 const GEMINI_URL = m => `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`;
 const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
@@ -262,6 +267,7 @@ async function groqCall(messages, model, { maxTokens = 1200, temperature = 0.2, 
   const body = {
     model, temperature, max_tokens: maxTokens,
     ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    ...(/gpt-oss/i.test(model) ? { reasoning_effort: 'low' } : {}), // v12.36: gpt-oss ragiona, 'low' = risposta piena
     messages,
   };
   const r = await axios.post(GROQ_URL, body, {

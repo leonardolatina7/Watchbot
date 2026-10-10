@@ -28,10 +28,15 @@ const marketCycles = require('./marketCycles');
 // GROQ — inferenza gratuita su modelli open (formato compatibile OpenAI).
 // Default: Llama 3.3 70B = giudizio migliore, multilingue, JSON affidabile.
 // Per PIÙ verdetti/giorno sul piano gratis si può mettere su Render:
-//   GROQ_MODEL=llama-3.1-8b-instant   (molto più volume, meno finezza)
+//   GROQ_MODEL=openai/gpt-oss-20b     (molto più volume, meno finezza)
 //   GROQ_MODEL=openai/gpt-oss-120b    (forte, volume medio)
 // NB: l'arbitraggio ORO è calcolo puro e NON passa di qui (gratis, illimitato).
-const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+// v12.36 — modelli Groq RITIRATI (deprecations Groq: llama-3.x il 16/08/26,
+// llama-4-scout il 17/07/26, qwen3.6/qwen3-32b): danno 404 model_not_found.
+// Se l'env su Render punta ancora a uno di questi, viene sostituito qui.
+const GROQ_DEAD = /llama-3\.|llama3|llama-4|qwen3-32b|qwen3\.6|kimi-k2|groq\/compound/i;
+function groqModel(envVal, fallback) { return (envVal && !GROQ_DEAD.test(envVal)) ? envVal : fallback; }
+const MODEL = groqModel(process.env.GROQ_MODEL, 'openai/gpt-oss-120b');
 const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 // ── Tetto morbido analisi/giorno (il piano gratis Groq limita anche i TOKEN
@@ -216,7 +221,8 @@ Regole:
       model: MODEL,
       max_tokens: 1200,
       temperature: 0.2,
-      response_format: { type: 'json_object' }, // JSON mode (Groq lo supporta sui Llama)
+      response_format: { type: 'json_object' }, // JSON mode
+      ...(/gpt-oss/i.test(MODEL) ? { reasoning_effort: 'low' } : {}), // gpt-oss ragiona: 'low' lascia i token alla risposta
       messages: [{ role: 'user', content }],
     }, {
       headers: {

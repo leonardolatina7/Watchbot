@@ -15,7 +15,12 @@ const visionEngine = require("./visionEngine");
 // GROQ_VISION_MODEL su Render. Se un domani torna 400/404 = modello rimosso:
 // apri console.groq.com/docs/models, prendi il vision/multimodale attivo e
 // aggiorna la env. Il bot non si rompe: il flip cieco semplicemente non spara.
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct";
+// v12.36 — modelli Groq RITIRATI (deprecations Groq: llama-3.x il 16/08/26,
+// llama-4-scout il 17/07/26, qwen3.6/qwen3-32b): danno 404 model_not_found.
+// Se l'env su Render punta ancora a uno di questi, viene sostituito qui.
+const GROQ_DEAD = /llama-3\.|llama3|llama-4|qwen3-32b|qwen3\.6|kimi-k2|groq\/compound/i;
+function groqModel(envVal, fallback) { return (envVal && !GROQ_DEAD.test(envVal)) ? envVal : fallback; }
+const GROQ_VISION_MODEL = groqModel(process.env.GROQ_VISION_MODEL, "qwen/qwen3.8-27b");
 const GROQ_KEY = process.env.GROQ_API_KEY;
 
 // ---------- CANCELLO A: punteggio testo ----------
