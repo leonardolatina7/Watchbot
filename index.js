@@ -115,6 +115,8 @@ catch (e) {
 const genericQueries = require('./genericQueries');
 const desperation = require('./desperationScore'); // ── MEMORIA PREZZI + PRESSIONE VENDITORE (v12.30) ──
 const coldAuctions = require('./coldAuctions'); // ── CANALI FREDDI: aste giudiziarie + dogana DE (v12.30) ──
+let ebelRadar = null; // ── RADAR EBEL (v12.35): catalizzatore Journe/Chanel ott 2026 ──
+try { ebelRadar = require('./ebelRadar'); } catch (e) { console.warn('[BOOT] ebelRadar.js non caricato: radar Ebel spento.', e.message); }
 const blindHunter = safeRequire('./blindHunter', { huntGems: async () => [], longinesLine: () => '' });
 // ── RASSEGNA STAMPA delle 8:00 (tutte le news dalle fonti autorevoli) ──
 const morningBrief = safeRequire('./morningBrief', { runMorningBrief: async () => ({ sent: 0 }) });
@@ -828,6 +830,7 @@ const WATCH_BRAND_WORDS = [
   'glycine','favre','nivada','wakmann','lemania','jaeger-lecoultre','lecoultre','universal geneve',
   'lip','eza','yema','pierce','aquastar','squale','vulcain','helvetia','seiko','citizen','orient',
   'poljot','strela','raketa','sekonda','vostok','zenith','el primero','baume','mercier','ulysse',
+  'ebel', // v12.35 radar Ebel
 ];
 
 // Restituisce true se il titolo mostra un segnale POSITIVO di orologio.
@@ -1967,9 +1970,15 @@ function getGoldQueries() {
   //    gonfiare il carico AI. ──
   const _jOff = (tick % 2) * 8;
   const jRot = QUERIES_BLOCK_J_ERRORI.slice(_jOff, _jOff + 8);
+  // ── BLOCCO K — RADAR EBEL (v12.35): 6 query Ebel per scan a finestra
+  //    rotante (tutto il blocco coperto in ~8 ore). Solo query EU: le JP
+  //    restano in ebelRadar.QUERIES_JP finché non c'è una fonte giapponese. ──
+  const _kPool = (ebelRadar && ebelRadar.QUERIES) || [];
+  const kRot = [];
+  for (let i = 0; i < Math.min(6, _kPool.length); i++) kRot.push(_kPool[(tick * 6 + i) % _kPool.length]);
   const themed = night
-    ? [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...QUERIES_BLOCK_I_LARGHE, ...jRot, ...rotating[tick % rotating.length], ...rotating[(tick+3) % rotating.length]]
-    : [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...QUERIES_BLOCK_I_LARGHE, ...jRot, ...rotating[tick % rotating.length]];
+    ? [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...QUERIES_BLOCK_I_LARGHE, ...jRot, ...kRot, ...rotating[tick % rotating.length], ...rotating[(tick+3) % rotating.length]]
+    : [...QUERIES_BLOCK_G_MELT, ...QUERIES_BLOCK_H_GREZZI, ...QUERIES_BLOCK_I_LARGHE, ...jRot, ...kRot, ...rotating[tick % rotating.length]];
   // Finestra scorrevole sul pool enciclopedico: di NOTTE 30 query, di GIORNO 15.
   // Così la notte copre tutto il pool in pochi cicli e al mattino è tutto battuto.
   const N = night ? 30 : 15;
@@ -2250,7 +2259,44 @@ async function runGoldScan(mode = 'all') {
           seenUrls.add(nu); // non rianalizzarlo ai prossimi giri
           continue;
         }
-        if (_gate.tier === 'top') console.log(`[GATE-TESI] 🔥 TOP (${_gate.reason}) → Sonnet: ${item.title?.slice(0,55)}`);
+        // ── RADAR EBEL (v12.35): decodifica referenza/seriale, soglia d'acquisto,
+        //    alert dedicato sui pezzi epoca Blum. Ebel moderno (Sellita/1216xxx)
+        //    o acciaio sopra soglia = scarto senza AI. Un Ebel TOP forza Sonnet. ──
+        try {
+          if (ebelRadar && /\beb[ae]ll?\b/i.test(item.title || '')) {
+            const _eb = ebelRadar.classify(`${item.title || ''} ${item.description || ''}`, priceEur > 0 ? priceEur : null);
+            if (_eb.level === 'SCARTO') {
+              funnelBump('ebelScartati');
+              console.log(`[EBEL] salto (${(_eb.motivi || []).join('; ')}): ${item.title?.slice(0,55)}`);
+              seenUrls.add(nu);
+              continue;
+            }
+            if (_eb.level === 'TOP') {
+              _gate.tier = 'top';
+              const _fpEb = 'ebel:' + nu;
+              if (!db.ebelSeen) db.ebelSeen = [];
+              if (!db.ebelSeen.includes(_fpEb)) {
+                db.ebelSeen.push(_fpEb);
+                if (db.ebelSeen.length > 2000) db.ebelSeen = db.ebelSeen.slice(-1000);
+                saveState();
+                funnelBump('ebelRadar');
+                const _t = _eb.target;
+                const _soglia = _t && _t.buyMax ? `Soglia acquisto: <b>€${_t.buyMax}</b>${_eb.sottoBuyMax ? ' ✅ SOTTO' : ' ❌ sopra'}\n` : 'Soglia: da valutare a mano (nessun venduto pubblico)\n';
+                await tg(
+                  `⌚️ <b>RADAR EBEL — ${_t ? _t.nome : 'epoca Blum'}</b> [${_eb.tag}]\n\n`+
+                  `<b>${(item.title||'').slice(0,80)}</b>\n`+
+                  `Prezzo: ${priceEur>0?('€'+priceEur):'n/d'}\n`+
+                  (_t && _t.compEUR ? `Comparabile: ~€${_t.compEUR}\n` : '')+
+                  _soglia+
+                  `Segnali: ${(_eb.motivi || []).slice(0,4).join(' · ')}\n`+
+                  `Verifica: fondello ref 7 cifre + seriale 64xxxxxx\n`+
+                  `\n${item.url||''}`
+                );
+                console.log(`[EBEL] TOP: ${item.title?.slice(0,55)}`);
+              }
+            }
+          }
+        } catch (e) { console.error('[EBEL]', e.message); }
 
         // ── RADAR PIPELINE INDIE (v12.33): intercetta i debutti della nuova onda
         //    (Morteau/Young Talent) e le montre-école sottovalutate PRIMA che il
